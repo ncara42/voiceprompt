@@ -208,7 +208,7 @@ def _action_settings(config: Config) -> None:
             sel.Choice(
                 "Behavior",
                 "behavior",
-                hint=f"hotkey · paste · temp · prompt",
+                hint="hotkey · paste · temp · prompt",
             ),
             sel.Separator(),
             sel.Choice("Back", "back"),
@@ -556,8 +556,8 @@ def _settings_capture_hotkey(config: Config) -> None:
         return
 
     # pynput capture path
-    import threading  # noqa: PLC0415
     from pynput import keyboard as kb  # noqa: PLC0415
+    import threading  # noqa: PLC0415
 
     console.print("  [brand]Press your new hotkey combination…[/brand]")
     console.print("  [hint](esc to cancel)[/hint]\n")
@@ -1338,7 +1338,10 @@ def _render_status_compact(config: Config, *, subtitle: str | None = None) -> No
     breadcrumb = f"  [hint]voiceprompt[/hint] [hint]v{version}[/hint]"
     if subtitle:
         breadcrumb += f"  [hint]·[/hint]  [brand]{subtitle}[/brand]"
-    breadcrumb += f"  [hint]·[/hint]  [value]{label}[/value] [hint]·[/hint] [accent2]{model}[/accent2]  [hint]·[/hint]  {state}"
+    breadcrumb += (
+        f"  [hint]·[/hint]  [value]{label}[/value] [hint]·[/hint] "
+        f"[accent2]{model}[/accent2]  [hint]·[/hint]  {state}"
+    )
 
     console.print(breadcrumb)
     console.print()
