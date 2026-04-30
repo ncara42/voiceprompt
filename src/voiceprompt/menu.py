@@ -556,8 +556,9 @@ def _settings_capture_hotkey(config: Config) -> None:
         return
 
     # pynput capture path
-    from pynput import keyboard as kb  # noqa: PLC0415
     import threading  # noqa: PLC0415
+
+    from pynput import keyboard as kb  # noqa: PLC0415
 
     console.print("  [brand]Press your new hotkey combination…[/brand]")
     console.print("  [hint](esc to cancel)[/hint]\n")
