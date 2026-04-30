@@ -1092,6 +1092,10 @@ def _record_audio(
 
     Returns ``None`` (and prints diagnostics) when the recording is cancelled,
     too short, silent, or the microphone cannot be opened.
+
+    The visualizer requires a TTY (prompt_toolkit attaches to stdin). When the
+    daemon is launched detached via ``voiceprompt start`` stdin is /dev/null,
+    so we fall back to a headless wait-loop that stops on the next hotkey press.
     """
     rec = recorder.Recorder(sample_rate=config.sample_rate)
 
@@ -1105,7 +1109,15 @@ def _record_audio(
         console.print(f"  [err][!] Could not start recording:[/err] {e}")
         return None
 
-    committed = viz.record_visual(rec, hotkey_ctx=hotkey_ctx)
+    if sys.stdin.isatty():
+        committed = viz.record_visual(rec, hotkey_ctx=hotkey_ctx)
+    elif hotkey_ctx is not None:
+        committed = viz.record_headless(rec, hotkey_ctx=hotkey_ctx)
+    else:
+        # No TTY and no hotkey context — there is no way to stop. Refuse loudly.
+        with contextlib.suppress(Exception):
+            rec.stop()
+        return None
 
     result = rec.stop()
     if not committed:

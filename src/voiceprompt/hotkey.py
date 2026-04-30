@@ -84,11 +84,23 @@ def parse_hotkey(spec: str) -> str:
 
 
 class HotkeyContext:
-    """Shared state between the pynput listener thread and the main daemon thread."""
+    """Shared state between the pynput listener thread and the main daemon thread.
+
+    Two recording UIs are supported and toggled by the same global hotkey:
+
+      * **Interactive** — a prompt_toolkit ``Application`` (the live waveform
+        visualizer). The visualizer registers itself via
+        :meth:`set_running_app`; ``on_hotkey`` calls ``app.exit`` to stop.
+      * **Headless** — used when the daemon runs detached (no TTY). The
+        record loop calls :meth:`set_headless_recording` and then
+        ``stop_event.wait()``. ``on_hotkey`` sets the event to stop.
+    """
 
     def __init__(self) -> None:
         self.start_event = threading.Event()
+        self.stop_event = threading.Event()
         self._current_app: Any | None = None
+        self._headless_recording = False
         self._lock = threading.Lock()
 
     def set_running_app(self, app: Any) -> None:
@@ -103,14 +115,22 @@ class HotkeyContext:
         with self._lock:
             return self._current_app is not None
 
+    def set_headless_recording(self, recording: bool) -> None:
+        with self._lock:
+            self._headless_recording = recording
+
     def on_hotkey(self) -> None:
         """Called from the pynput thread. Toggles between start and stop."""
         with self._lock:
             app = self._current_app
+            headless = self._headless_recording
         if app is not None:
-            # We're recording -- ask prompt_toolkit to exit cleanly.
+            # Interactive mode -- ask prompt_toolkit to exit cleanly.
             with contextlib.suppress(Exception):
                 app.exit(result=True)
+        elif headless:
+            # Headless mode -- the record loop is waiting on stop_event.
+            self.stop_event.set()
         else:
             self.start_event.set()
 
