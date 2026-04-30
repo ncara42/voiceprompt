@@ -1,14 +1,17 @@
 ---
 name: voiceprompt
-description: "Capture a voice dictation through the voiceprompt CLI and treat the refined prompt as the user's actual instruction. Use ONLY when the user explicitly invokes /voiceprompt — never proactively, since this requires the user to physically speak. Also handles /voiceprompt start|stop|status to control the background hotkey daemon."
+description: "Boot the voiceprompt global-hotkey daemon so the user can dictate with Ctrl+Space from any window. Use ONLY when the user explicitly invokes /voiceprompt — do not call proactively. Also handles /voiceprompt stop|status and /voiceprompt now for a one-shot dictation without the daemon."
 ---
 
 # voiceprompt — voice-to-prompt for Claude Code
 
 The user has the `voiceprompt` CLI installed (a tool that records audio,
 transcribes locally with Parakeet, and refines the transcript via their
-configured AI provider). When the user types `/voiceprompt`, run the CLI
-and treat the printed prompt as if they had typed it.
+configured AI provider). When the user types `/voiceprompt`, your job is
+to **start the background daemon** so the user can press their global
+hotkey (default `Ctrl+Space`) from any window — including this one — to
+dictate. The actual dictation happens through the hotkey, not through
+this skill.
 
 ## Prerequisite check
 
@@ -21,84 +24,92 @@ uv tool install voiceprompt-cli           # recommended
 pipx install voiceprompt-cli
 ```
 
-Then the user must run `voiceprompt` once to set up an API key (this opens
-a guided wizard). After setup, `/voiceprompt` works.
+Then the user must run `voiceprompt --menu` once to set up an API key
+(opens a guided wizard). After setup, `/voiceprompt` works.
 
 ## Dispatch
 
 Pick the branch based on `$ARGUMENTS`:
 
-| Argument                          | What to do                                             |
-|-----------------------------------|--------------------------------------------------------|
-| _(empty)_                         | One-shot dictation with auto-stop on silence           |
-| an integer (e.g. `15`, `45`)      | One-shot dictation with that integer as the hard cap   |
-| `start`                           | Start the global-hotkey daemon                         |
-| `stop`                            | Stop the daemon                                        |
-| `status`                          | Show daemon state                                      |
-| anything else                     | Treat as one-shot if numeric, otherwise show usage     |
+| Argument                 | What to do                                                |
+|--------------------------|-----------------------------------------------------------|
+| _(empty)_                | **Default — start the hotkey daemon**                     |
+| `stop`                   | Stop the daemon                                           |
+| `status`                 | Show daemon state                                         |
+| `now`                    | One-shot dictation via stdout (no daemon needed)          |
+| `now <N>`                | One-shot dictation, hard-cap N seconds                    |
+| anything else            | Show the dispatch table above                             |
 
-## Branch 1 — one-shot dictation (the common case)
+## Branch 1 — start the daemon (the default action)
 
-1. Tell the user briefly: "Recording. Speak now — I'll auto-stop when you
-   finish."
+This is the common case. Most users want this.
 
-2. Run the Bash tool with this command, exactly:
+1. Run `voiceprompt status` to check if the daemon is already running.
 
-   ```
-   voiceprompt dictate --stdout --max-seconds <N>
-   ```
+2. **If already running**, tell the user concisely:
 
-   - If the user passed an integer, use it as `<N>`.
-   - Otherwise omit `--max-seconds` and let the CLI use its default (120s
-     hard cap).
+   > Daemon is running. Press **Ctrl+Space** anywhere — including this
+   > input — to dictate. Press it again to stop. The refined prompt will
+   > be pasted into whichever window has focus.
 
-   Notes:
-   - `--stdout` suppresses the TUI; only the refined prompt prints to stdout.
-   - All progress + errors go to stderr.
-   - **Voice-activity detection auto-stops** the recording roughly 1.5s
-     after the user stops speaking, so duration is dictated by the user, not
-     by the timer. `--max-seconds` is just a safety net.
+3. **If not running**, run `voiceprompt start`. Show the output verbatim
+   (it includes the pid, hotkey, and log path). Then tell the user:
 
-3. **Critical**: Treat stdout as the user's actual prompt. Do **not** quote
-   it back, do not summarize, do not say "you said …". Read it as their
-   real instruction and respond accordingly. Behave exactly as if they had
-   typed it themselves.
+   > Daemon started. Press **Ctrl+Space** anywhere — including this
+   > input — to dictate. Run `/voiceprompt stop` when you're done.
 
-4. If exit code is non-zero, give a one-line explanation based on stderr:
-   - 1: missing API key — `voiceprompt set-key <KEY>` (or `voiceprompt --menu`)
-   - 2: transcription model not on disk — run `voiceprompt --menu` once interactively to download it
-   - 3: no microphone or denied permissions — System Settings → Privacy & Security → Microphone
-   - 4: silent or empty audio — speak louder, check the mic, or grant Microphone access to the terminal
-   - 5: speech-to-text failure — see stderr
-   - 6: AI provider failure (auth, quota) — `voiceprompt config` to inspect, `voiceprompt set-key` to fix
-   - 130: cancelled
+4. Do **not** run `voiceprompt dictate` or any recording command yourself.
+   The hotkey is the user-controlled toggle: they decide when to start
+   and stop. Your job ends after `start`.
 
 ## Branch 2 — daemon control
 
-For `start`, `stop`, or `status`, run the matching command:
-
 | Argument | Command                |
 |----------|------------------------|
-| start    | `voiceprompt start`    |
 | stop     | `voiceprompt stop`     |
 | status   | `voiceprompt status`   |
 
 Show the command output verbatim. Don't add commentary unless something
 went wrong.
 
-After a successful `start`, suggest the global-hotkey workflow:
+## Branch 3 — one-shot dictation (`/voiceprompt now`)
 
-> The daemon is running. Press **Ctrl+Space** (or your configured hotkey)
-> from any window — including this one — to dictate, then press it again
-> to stop. The refined prompt will be pasted into whichever window has
-> focus. The slash command is best for short, occasional dictations; the
-> hotkey is better when you'll dictate repeatedly.
+For users who don't want a daemon, or who prefer a single click-to-record
+flow. Less ergonomic than the hotkey but always available.
+
+1. Tell the user briefly: "Recording. Speak now — I'll auto-stop when you
+   finish."
+
+2. Run the Bash tool:
+
+   ```
+   voiceprompt dictate --stdout --max-seconds <N>
+   ```
+
+   - If the user passed an integer after `now` (e.g. `/voiceprompt now 60`),
+     use it as `<N>`. Otherwise omit `--max-seconds` and let the CLI use
+     its default.
+   - Voice-activity detection auto-stops the recording ~1.5s after the
+     user stops speaking.
+
+3. **Critical**: treat stdout as the user's actual prompt. Do **not**
+   quote it back, do not summarize, do not say "you said …". Read it as
+   their real instruction and respond accordingly.
+
+4. If exit code is non-zero, give a one-line explanation based on stderr:
+   - 1: missing API key — `voiceprompt set-key <KEY>` (or `voiceprompt --menu`)
+   - 2: transcription model not on disk — `voiceprompt --menu` to download it
+   - 3: no microphone or denied permissions — System Settings → Privacy & Security → Microphone
+   - 4: silent or empty audio — speak louder, check the mic, grant Microphone access to the terminal
+   - 5: speech-to-text failure — see stderr
+   - 6: AI provider failure — `voiceprompt config` to inspect, `voiceprompt set-key` to fix
+   - 130: cancelled
 
 ## Important rules
 
-- **Never invoke this skill proactively.** It requires the user to be at
-  their microphone and ready to speak. Only run it when they explicitly
-  type `/voiceprompt`.
-- **Don't echo back the dictated prompt.** Just respond to it.
-- **Don't warn about the CLI flow** unless the slash command failed — the
-  user picked the slash command on purpose.
+- **Never invoke this skill proactively.** Only run it when the user
+  explicitly types `/voiceprompt`.
+- **The default action is starting the daemon.** Do not record audio
+  yourself unless the user asked for `now`.
+- After starting the daemon, **stop**. Don't loop, don't poll, don't try
+  to "watch" for dictations — the daemon and the hotkey are user-driven.
