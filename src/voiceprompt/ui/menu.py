@@ -21,23 +21,16 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from voiceprompt import (
-    claude,
-    gemini,
-    github_models,
-    history,
-    inject,
-    ollama,
-    recorder,
-    reformulator,
-    transcriber,
-    viz,
-)
 from voiceprompt import config as cfg_mod
-from voiceprompt import select as sel
-from voiceprompt.clipboard import copy as clipboard_copy
+from voiceprompt import history, reformulator
+from voiceprompt.audio import recorder, transcriber
 from voiceprompt.config import Config
-from voiceprompt.styles import banner, console
+from voiceprompt.providers import claude, gemini, github_models, ollama
+from voiceprompt.system import inject
+from voiceprompt.system.clipboard import copy as clipboard_copy
+from voiceprompt.ui import select as sel
+from voiceprompt.ui import viz
+from voiceprompt.ui.styles import banner, console
 
 QSTYLE = QStyle(
     [
@@ -407,7 +400,7 @@ def _settings_pick_transcription_model(config: Config) -> None:
         "Transcription model",
         [
             sel.Choice(_short_transcription_model(name), name, hint=desc)
-            for name, desc in transcriber.PARAKEET_MODELS
+            for name, desc in transcriber.MODELS
         ],
         default=config.transcription_model,
         back_value=None,
@@ -428,7 +421,7 @@ def _settings_pick_language(config: Config) -> None:
         [
             sel.Choice(
                 code, code,
-                hint="Parakeet auto-detects; this only hints the AI provider"
+                hint="Whisper auto-detects; this only hints the AI provider"
                 if code == "auto" else "",
             )
             for code in LANGUAGES
@@ -738,7 +731,7 @@ def _show_quickstart(config: Config) -> None:
         (config.hotkey, "kbd"),
         (" anywhere on your system to start recording.\n", "value"),
         ("  3. Press it again to stop.\n", "value"),
-        ("  4. Parakeet transcribes locally; the AI provider refines the prompt.\n", "value"),
+        ("  4. Whisper transcribes locally; the AI provider refines the prompt.\n", "value"),
         ("  5. The result is pasted into whatever app had focus.\n\n", "value"),
         ("AUTO-START AT LOGIN\n", "section"),
         ("  macOS    launchd plist or Login Items → ", "value"),
@@ -1157,11 +1150,11 @@ def _record_audio(
 
 
 def _transcribe_audio(config: Config, wav_path: Path) -> str | None:
-    """Run local STT with Parakeet. Returns the transcript or ``None`` on failure."""
+    """Run local STT with faster-whisper. Returns the transcript or ``None`` on failure."""
     first_load = not transcriber.is_model_cached(config.transcription_model)
     short_name = _short_transcription_model(config.transcription_model)
     spinner_msg = (
-        f"[brand]loading parakeet · {short_name}…[/brand]"
+        f"[brand]loading whisper · {short_name}…[/brand]"
         if first_load
         else f"[brand]transcribing · {short_name}…[/brand]"
     )
@@ -1183,7 +1176,7 @@ def _transcribe_audio(config: Config, wav_path: Path) -> str | None:
     if not transcript:
         if transcript is not None:
             # transcriber returned an empty string — no speech detected.
-            console.print("  [warn]Parakeet did not detect speech. Try again.[/warn]")
+            console.print("  [warn]Whisper did not detect speech. Try again.[/warn]")
         return None
 
     console.print()
@@ -1652,15 +1645,15 @@ def _set_api_key(config: Config, provider: str, *, intro: bool) -> bool:
 
 
 def _ensure_transcription_model_downloaded(model_name: str, *, ask_confirm: bool) -> bool:
-    """Make sure the Parakeet model weights are on disk. Returns False if user cancels."""
+    """Make sure the Whisper model weights are on disk. Returns False if user cancels."""
     if transcriber.is_model_on_disk(model_name):
         return True
 
-    size = transcriber.model_download_size(model_name) or "around 1.2 GB"
+    size = transcriber.model_download_size(model_name) or "a few hundred MB"
     short = _short_transcription_model(model_name)
     if ask_confirm:
         console.print(
-            f"\n  [warn][!] Parakeet model '{short}' is not downloaded yet[/warn] "
+            f"\n  [warn][!] Whisper model '{short}' is not downloaded yet[/warn] "
             f"[hint]({size}).[/hint]"
         )
         proceed = questionary.confirm(
@@ -1673,7 +1666,7 @@ def _ensure_transcription_model_downloaded(model_name: str, *, ask_confirm: bool
             return False
 
     console.print(
-        f"  [brand]Downloading parakeet '{short}' ({size}) — first run, this can take a while…[/brand]"
+        f"  [brand]Downloading whisper '{short}' ({size}) — first run, this can take a while…[/brand]"
     )
     try:
         transcriber.download_model(model_name)
@@ -1686,6 +1679,7 @@ def _ensure_transcription_model_downloaded(model_name: str, *, ask_confirm: bool
 
 
 def _short_transcription_model(model_id: str) -> str:
+    """faster-whisper ids are already short ('large-v3'); legacy ids may be 'org/name'."""
     return model_id.split("/", 1)[1] if "/" in model_id else model_id
 
 

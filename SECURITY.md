@@ -39,6 +39,6 @@ Out of scope:
   or API-key headers before being shown.
 - AppleScript invocations pass user-controlled strings as `osascript` `on run argv`
   arguments, never interpolated into the script source.
-- Audio is transcribed locally (Parakeet) and never uploaded anywhere by us.
+- Audio is transcribed locally (faster-whisper) and never uploaded anywhere by us.
 - Recorded WAVs live only in the OS temp directory and are deleted as soon as the
   reformulation finishes (or the dictation is cancelled).

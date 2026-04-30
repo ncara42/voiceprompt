@@ -1,6 +1,6 @@
 """Allow `python -m voiceprompt` to launch the CLI."""
 
-from voiceprompt import proctitle
+from voiceprompt.system import proctitle
 
 proctitle.apply()
 

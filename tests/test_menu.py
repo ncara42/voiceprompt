@@ -6,9 +6,10 @@ from unittest.mock import patch
 
 from rich.console import Console
 
-from voiceprompt import menu, recorder
+from voiceprompt.audio import recorder
 from voiceprompt.config import Config
-from voiceprompt.styles import theme
+from voiceprompt.ui import menu
+from voiceprompt.ui.styles import theme
 
 
 class FakeConsole:

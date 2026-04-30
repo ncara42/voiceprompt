@@ -91,18 +91,18 @@ def _short_github_model(model_id: str) -> str:
 def reformulate_text(transcript: str, cfg: Config) -> str:
     p = active_provider(cfg)
     if p == "ollama":
-        from voiceprompt import ollama as ollama_mod  # noqa: PLC0415
+        from voiceprompt.providers import ollama as ollama_mod  # noqa: PLC0415
 
         return ollama_mod.reformulate_text(transcript, cfg)
     if p == "gemini":
-        from voiceprompt import gemini as gemini_mod  # noqa: PLC0415
+        from voiceprompt.providers import gemini as gemini_mod  # noqa: PLC0415
 
         return gemini_mod.reformulate_text(transcript, cfg)
     if p == "github_models":
-        from voiceprompt import github_models as github_models_mod  # noqa: PLC0415
+        from voiceprompt.providers import github_models as github_models_mod  # noqa: PLC0415
 
         return github_models_mod.reformulate_text(transcript, cfg)
-    from voiceprompt import claude as claude_mod  # noqa: PLC0415
+    from voiceprompt.providers import claude as claude_mod  # noqa: PLC0415
 
     return claude_mod.reformulate_text(transcript, cfg)
 
@@ -110,17 +110,17 @@ def reformulate_text(transcript: str, cfg: Config) -> str:
 def quick_test(cfg: Config) -> str:
     p = active_provider(cfg)
     if p == "ollama":
-        from voiceprompt import ollama as ollama_mod  # noqa: PLC0415
+        from voiceprompt.providers import ollama as ollama_mod  # noqa: PLC0415
 
         return ollama_mod.quick_test(cfg)
     if p == "gemini":
-        from voiceprompt import gemini as gemini_mod  # noqa: PLC0415
+        from voiceprompt.providers import gemini as gemini_mod  # noqa: PLC0415
 
         return gemini_mod.quick_test(cfg)
     if p == "github_models":
-        from voiceprompt import github_models as github_models_mod  # noqa: PLC0415
+        from voiceprompt.providers import github_models as github_models_mod  # noqa: PLC0415
 
         return github_models_mod.quick_test(cfg)
-    from voiceprompt import claude as claude_mod  # noqa: PLC0415
+    from voiceprompt.providers import claude as claude_mod  # noqa: PLC0415
 
     return claude_mod.quick_test(cfg)

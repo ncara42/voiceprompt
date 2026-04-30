@@ -6,8 +6,8 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from voiceprompt import github_models
 from voiceprompt.config import Config
+from voiceprompt.providers import github_models
 from voiceprompt.reformulator import AuthError, QuotaExceededError
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 # Run before anything that may initialize AppKit (pynput in particular). Once
 # NSApplication latches onto the original "Python" name the menu bar / dock
 # label can't be changed for the lifetime of the process.
-from voiceprompt import proctitle  # noqa: I001 -- intentional: keep before other imports
+from voiceprompt.system import proctitle  # noqa: I001 -- intentional: keep before other imports
 
 proctitle.apply()
 
@@ -13,8 +13,8 @@ import typer  # noqa: E402
 
 from voiceprompt import __version__  # noqa: E402
 from voiceprompt import config as cfg_mod  # noqa: E402
-from voiceprompt.menu import run_menu  # noqa: E402
-from voiceprompt.styles import console  # noqa: E402
+from voiceprompt.ui.menu import run_menu  # noqa: E402
+from voiceprompt.ui.styles import console  # noqa: E402
 
 app = typer.Typer(
     add_completion=False,
@@ -184,7 +184,7 @@ def dictate_oneshot(
         _dictate_headless(config, max_seconds=max_seconds)
         return
 
-    from voiceprompt.menu import _action_dictate  # noqa: PLC0415
+    from voiceprompt.ui.menu import _action_dictate  # noqa: PLC0415
 
     _action_dictate(config)
 
@@ -213,9 +213,9 @@ def _dictate_headless(config, *, max_seconds: int) -> None:
     import time  # noqa: PLC0415
 
     from voiceprompt import history as hist  # noqa: PLC0415
-    from voiceprompt import recorder as rec_mod  # noqa: PLC0415
     from voiceprompt import reformulator as ref  # noqa: PLC0415
-    from voiceprompt import transcriber as tr  # noqa: PLC0415
+    from voiceprompt.audio import recorder as rec_mod  # noqa: PLC0415
+    from voiceprompt.audio import transcriber as tr  # noqa: PLC0415
 
     def _err(msg: str) -> None:
         print(f"voiceprompt: {msg}", file=sys.stderr, flush=True)
@@ -382,7 +382,7 @@ def history_cmd(
         )
         return
 
-    from voiceprompt.menu import _format_relative_ts  # noqa: PLC0415
+    from voiceprompt.ui.menu import _format_relative_ts  # noqa: PLC0415
 
     for i, entry in enumerate(entries, start=1):
         ts = _format_relative_ts(entry.ts)
@@ -415,7 +415,7 @@ def replay_cmd(
     """
     from voiceprompt import history as hist  # noqa: PLC0415
     from voiceprompt import inject as inj  # noqa: PLC0415
-    from voiceprompt.clipboard import copy as clipboard_copy  # noqa: PLC0415
+    from voiceprompt.system.clipboard import copy as clipboard_copy  # noqa: PLC0415
 
     if index < 1:
         console.print("[err]--index must be >= 1.[/err]")
@@ -708,7 +708,7 @@ def listen_cmd(
       System Settings -> Privacy & Security -> Input Monitoring  (listen for the hotkey)
       System Settings -> Privacy & Security -> Accessibility     (simulate Cmd+V)
     """
-    from voiceprompt.menu import _action_listen  # noqa: PLC0415
+    from voiceprompt.ui.menu import _action_listen  # noqa: PLC0415
 
     config = cfg_mod.load()
     if not config.is_configured:

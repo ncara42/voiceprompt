@@ -27,25 +27,25 @@ class ReformulatorDispatchTests(unittest.TestCase):
 
     def test_reformulate_dispatches_to_claude(self) -> None:
         cfg = Config(anthropic_api_key="x")
-        with patch("voiceprompt.claude.reformulate_text", return_value="C") as m:
+        with patch("voiceprompt.providers.claude.reformulate_text", return_value="C") as m:
             self.assertEqual(reformulator.reformulate_text("hi", cfg), "C")
         m.assert_called_once_with("hi", cfg)
 
     def test_reformulate_dispatches_to_ollama(self) -> None:
         cfg = Config(provider="ollama", ollama_api_key="x")
-        with patch("voiceprompt.ollama.reformulate_text", return_value="O") as m:
+        with patch("voiceprompt.providers.ollama.reformulate_text", return_value="O") as m:
             self.assertEqual(reformulator.reformulate_text("hi", cfg), "O")
         m.assert_called_once_with("hi", cfg)
 
     def test_reformulate_dispatches_to_gemini(self) -> None:
         cfg = Config(provider="gemini", gemini_api_key="x")
-        with patch("voiceprompt.gemini.reformulate_text", return_value="G") as m:
+        with patch("voiceprompt.providers.gemini.reformulate_text", return_value="G") as m:
             self.assertEqual(reformulator.reformulate_text("hi", cfg), "G")
         m.assert_called_once_with("hi", cfg)
 
     def test_reformulate_dispatches_to_github_models(self) -> None:
         cfg = Config(provider="github_models", github_models_token="github_pat_x")
-        with patch("voiceprompt.github_models.reformulate_text", return_value="GH") as m:
+        with patch("voiceprompt.providers.github_models.reformulate_text", return_value="GH") as m:
             self.assertEqual(reformulator.reformulate_text("hi", cfg), "GH")
         m.assert_called_once_with("hi", cfg)
 

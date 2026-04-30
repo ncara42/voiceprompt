@@ -17,8 +17,8 @@ from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 
-from voiceprompt.hotkey import HotkeyContext
-from voiceprompt.recorder import Recorder
+from voiceprompt.audio.recorder import Recorder
+from voiceprompt.system.hotkey import HotkeyContext
 
 # 8-level vertical block characters used to draw the waveform.
 BARS = "_,-~=^*#"  # ASCII fallback path; not used (kept for reference).

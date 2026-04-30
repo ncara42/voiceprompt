@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: ${{ matrix.os }} · py${{ matrix.python }}
@@ -35,11 +39,17 @@ jobs:
         run: uv sync --group dev
 
       - name: Lint
-        run: uv run ruff check src/
+        run: uv run ruff check src/ tests/
+
+      - name: Type-check (gradual)
+        run: uv run mypy
+
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Import smoke test
         run: |
-          uv run python -c "from voiceprompt import cli, menu, config, recorder, claude, transcriber, viz, hotkey, inject, select, clipboard, styles; print('imports OK')"
+          uv run python -c "from voiceprompt import cli, config, history, reformulator; from voiceprompt.audio import recorder, transcriber; from voiceprompt.providers import claude, gemini, ollama, github_models; from voiceprompt.system import hotkey, inject, clipboard, proctitle; from voiceprompt.ui import menu, viz, styles, select; print('imports OK')"
 
       - name: CLI smoke test
         run: uv run voiceprompt --version

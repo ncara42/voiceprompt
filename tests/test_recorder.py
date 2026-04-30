@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from voiceprompt import recorder
+from voiceprompt.audio import recorder
 
 
 class FakeSoundDevice:

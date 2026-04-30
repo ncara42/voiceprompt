@@ -29,7 +29,7 @@ DEFAULT_OLLAMA_MODEL = "gpt-oss:120b"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_GITHUB_MODELS_MODEL = "openai/gpt-4o-mini"
 DEFAULT_PROVIDER = "claude"
-DEFAULT_TRANSCRIPTION_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+DEFAULT_TRANSCRIPTION_MODEL = "distil-large-v3"
 
 VALID_PROVIDERS = ("claude", "ollama", "gemini", "github_models")
 
@@ -101,10 +101,16 @@ def load() -> Config:
     if isinstance(data.get("model"), str) and not data["model"].startswith("claude"):
         data.pop("model", None)
 
-    # Migrate from pre-Parakeet configs that stored a faster-whisper id
-    # ("tiny"/"base"/"small"/"medium"/"large-v3") under the old key. Drop the
-    # legacy value so the new Parakeet default kicks in -- Whisper sizes don't
-    # map to a Parakeet variant.
+    # Migrate from pre-Whisper configs that stored a Parakeet model id
+    # ("mlx-community/parakeet-..."). Drop it so the new Whisper default kicks
+    # in -- Parakeet model ids don't map to a faster-whisper variant.
+    legacy_model = data.get("transcription_model")
+    if isinstance(legacy_model, str) and (
+        legacy_model.startswith("mlx-community/")
+        or "parakeet" in legacy_model.lower()
+    ):
+        data.pop("transcription_model", None)
+    # Also clear the older key if a very old config still has it.
     if "whisper_model" in data and "transcription_model" not in data:
         data.pop("whisper_model", None)
 

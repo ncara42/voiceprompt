@@ -37,12 +37,29 @@ class ConfigLoadTests(unittest.TestCase):
         self.assertEqual(loaded.system_prompt, config.DEFAULT_SYSTEM_PROMPT)
 
     def test_load_drops_legacy_whisper_model_field(self) -> None:
-        """Old configs storing whisper_model: 'small' should fall back to the
-        new Parakeet default, since whisper sizes don't map to a Parakeet variant."""
+        """Old configs storing whisper_model: 'small' under the pre-0.2 key
+        should fall back to the current default (the legacy key is no longer
+        recognised by the dataclass)."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             path.write_text(
                 json.dumps({"whisper_model": "small"}),
+                encoding="utf-8",
+            )
+
+            with patch.object(config, "config_path", return_value=path):
+                loaded = config.load()
+
+        self.assertEqual(loaded.transcription_model, config.DEFAULT_TRANSCRIPTION_MODEL)
+
+    def test_load_migrates_parakeet_model_to_whisper_default(self) -> None:
+        """Configs from the Parakeet era ('mlx-community/parakeet-...') must
+        be migrated to the new faster-whisper default — those ids cannot be
+        loaded by the current transcriber."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"transcription_model": "mlx-community/parakeet-tdt-0.6b-v3"}),
                 encoding="utf-8",
             )
 
