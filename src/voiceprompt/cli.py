@@ -195,15 +195,24 @@ def dictate_oneshot(
         "--stdout",
         help=(
             "Headless mode: print only the refined prompt to stdout (no TUI, no "
-            "clipboard, no paste). Diagnostics go to stderr. Stops on Enter when "
-            "stdin is a TTY, otherwise after --max-seconds. Designed for piping "
-            "into editors, plugins, and scripts."
+            "clipboard, no paste). Diagnostics go to stderr. Auto-stops on "
+            "extended silence (see --silence) or after --max-seconds, whichever "
+            "comes first. Designed for piping into editors, plugins, and scripts."
         ),
     ),
     max_seconds: int = typer.Option(
-        60,
+        120,
         "--max-seconds",
-        help="Hard cap on recording duration. Always enforced in --stdout mode.",
+        help="Hard cap on recording duration. Always enforced as a safety net.",
+    ),
+    silence_seconds: float = typer.Option(
+        1.5,
+        "--silence",
+        help=(
+            "Auto-stop after this many seconds of silence FOLLOWING detected "
+            "speech (in --stdout mode). Set to 0 to disable and rely solely "
+            "on --max-seconds."
+        ),
     ),
 ) -> None:
     """Shortcut: one dictation session and exit (does not open the menu)."""
@@ -219,7 +228,11 @@ def dictate_oneshot(
         raise typer.Exit(code=1)
 
     if stdout:
-        _dictate_headless(config, max_seconds=max_seconds)
+        _dictate_headless(
+            config,
+            max_seconds=max_seconds,
+            silence_seconds=silence_seconds,
+        )
         return
 
     from voiceprompt.menu import _action_dictate  # noqa: PLC0415
@@ -227,13 +240,19 @@ def dictate_oneshot(
     _action_dictate(config)
 
 
-def _dictate_headless(config, *, max_seconds: int) -> None:
+def _dictate_headless(
+    config,
+    *,
+    max_seconds: int,
+    silence_seconds: float = 1.5,
+) -> None:
     """Record → transcribe → refine → print prompt to stdout. No TUI, no side effects.
 
-    Stops when:
-      * the user presses Enter (only if stdin is a TTY),
-      * SIGINT is received (cancels the cycle, no output),
-      * ``max_seconds`` elapses (always enforced).
+    Stops when (whichever comes first):
+      * Enter on stdin (only if stdin is a TTY),
+      * after ``silence_seconds`` of silence following detected speech (VAD),
+      * after ``max_seconds`` (hard cap),
+      * SIGINT is received (cancels the cycle, no output).
 
     Exit codes:
       0  success — the refined prompt was printed to stdout
@@ -254,6 +273,13 @@ def _dictate_headless(config, *, max_seconds: int) -> None:
     from voiceprompt import recorder as rec_mod  # noqa: PLC0415
     from voiceprompt import reformulator as ref  # noqa: PLC0415
     from voiceprompt import transcriber as tr  # noqa: PLC0415
+
+    # Voice-activity detection thresholds. Values are int16 peak amplitude per
+    # audio callback (one chunk ~= 60–100 ms at 16 kHz). The hysteresis gap
+    # between the speech and silence levels avoids flapping on the boundary.
+    _SPEECH_PEAK = 500
+    _SILENCE_PEAK = 200
+    _POLL_INTERVAL = 0.1
 
     def _err(msg: str) -> None:
         print(f"voiceprompt: {msg}", file=sys.stderr, flush=True)
@@ -276,25 +302,51 @@ def _dictate_headless(config, *, max_seconds: int) -> None:
         raise typer.Exit(code=3) from None
 
     interactive = sys.stdin.isatty()
+    vad_enabled = silence_seconds > 0
     if interactive:
         _err("recording — press Enter to stop, Ctrl+C to cancel.")
+    elif vad_enabled:
+        _err(
+            f"recording — speak now; auto-stops {silence_seconds:.1f}s after "
+            f"you finish (max {max_seconds}s, Ctrl+C to cancel)."
+        )
     else:
         _err(f"recording — auto-stop in {max_seconds}s (Ctrl+C to cancel).")
 
     started = time.monotonic()
     cancelled = False
+    speech_started = False
+    silence_started_at: float | None = None
     try:
         while True:
             if time.monotonic() - started >= max_seconds:
                 _err(f"max duration reached ({max_seconds}s), stopping.")
                 break
+
+            # Voice-activity detection — only relevant when stdin is not a TTY.
+            if vad_enabled and not interactive:
+                peak = rec.latest_peak()
+                if peak >= _SPEECH_PEAK:
+                    speech_started = True
+                    silence_started_at = None
+                elif speech_started and peak < _SILENCE_PEAK:
+                    if silence_started_at is None:
+                        silence_started_at = time.monotonic()
+                    elif (
+                        time.monotonic() - silence_started_at >= silence_seconds
+                    ):
+                        _err(
+                            f"silence detected ({silence_seconds:.1f}s), stopping."
+                        )
+                        break
+
             if interactive:
-                ready, _, _ = select.select([sys.stdin], [], [], 0.2)
+                ready, _, _ = select.select([sys.stdin], [], [], _POLL_INTERVAL)
                 if ready:
                     sys.stdin.readline()
                     break
             else:
-                time.sleep(0.2)
+                time.sleep(_POLL_INTERVAL)
     except KeyboardInterrupt:
         cancelled = True
 

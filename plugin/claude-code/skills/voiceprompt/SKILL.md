@@ -30,8 +30,8 @@ Pick the branch based on `$ARGUMENTS`:
 
 | Argument                          | What to do                                             |
 |-----------------------------------|--------------------------------------------------------|
-| _(empty)_                         | One-shot dictation, default 30s cap                    |
-| an integer (e.g. `15`, `45`)      | One-shot dictation, that many seconds as the cap       |
+| _(empty)_                         | One-shot dictation with auto-stop on silence           |
+| an integer (e.g. `15`, `45`)      | One-shot dictation with that integer as the hard cap   |
 | `start`                           | Start the global-hotkey daemon                         |
 | `stop`                            | Stop the daemon                                        |
 | `status`                          | Show daemon state                                      |
@@ -39,8 +39,8 @@ Pick the branch based on `$ARGUMENTS`:
 
 ## Branch 1 — one-shot dictation (the common case)
 
-1. Tell the user briefly: "Recording for up to N seconds. Speak now."
-   (replace N with the chosen --max-seconds)
+1. Tell the user briefly: "Recording. Speak now — I'll auto-stop when you
+   finish."
 
 2. Run the Bash tool with this command, exactly:
 
@@ -48,12 +48,16 @@ Pick the branch based on `$ARGUMENTS`:
    voiceprompt dictate --stdout --max-seconds <N>
    ```
 
+   - If the user passed an integer, use it as `<N>`.
+   - Otherwise omit `--max-seconds` and let the CLI use its default (120s
+     hard cap).
+
    Notes:
    - `--stdout` suppresses the TUI; only the refined prompt prints to stdout.
    - All progress + errors go to stderr.
-   - Stdin is not a TTY when invoked from Bash, so the recorder auto-stops
-     at `--max-seconds`. The user cannot press Enter to stop early —
-     pick a short value (10–30s) for normal use.
+   - **Voice-activity detection auto-stops** the recording roughly 1.5s
+     after the user stops speaking, so duration is dictated by the user, not
+     by the timer. `--max-seconds` is just a safety net.
 
 3. **Critical**: Treat stdout as the user's actual prompt. Do **not** quote
    it back, do not summarize, do not say "you said …". Read it as their

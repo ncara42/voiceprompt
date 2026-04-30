@@ -36,22 +36,24 @@ Restart Claude Code (or start a new session) so the skill loads.
 
 ## Use
 
-| Command                 | What it does                                                |
-|-------------------------|-------------------------------------------------------------|
-| `/voiceprompt`          | Record up to 30s, transcribe, refine, treat as your prompt  |
-| `/voiceprompt 15`       | Same but cap recording at 15 seconds                        |
-| `/voiceprompt start`    | Start the global-hotkey daemon in the background            |
-| `/voiceprompt stop`     | Stop it                                                     |
-| `/voiceprompt status`   | Check whether the daemon is alive                           |
+| Command                 | What it does                                                  |
+|-------------------------|---------------------------------------------------------------|
+| `/voiceprompt`          | Record freely, auto-stop ~1.5s after you finish speaking      |
+| `/voiceprompt 60`       | Same, with a hard cap of 60 seconds (default cap is 120)      |
+| `/voiceprompt start`    | Start the global-hotkey daemon in the background              |
+| `/voiceprompt stop`     | Stop it                                                       |
+| `/voiceprompt status`   | Check whether the daemon is alive                             |
 
 ## How it works
 
-`/voiceprompt` calls `voiceprompt dictate --stdout` under the hood. Because
-Claude Code invokes shell commands without a TTY on stdin, the recorder
-auto-stops at the `--max-seconds` cap rather than on Enter — pick a value
-that matches the length of what you want to say. All progress and error
-messages go to stderr, so only the refined prompt appears as the command
-output. Claude reads that output and responds to it as if you had typed it.
+`/voiceprompt` calls `voiceprompt dictate --stdout` under the hood. Voice
+activity detection ends the recording about 1.5 s after you stop talking,
+so the duration is whatever you want — there's no fixed timer to wait out.
+`--max-seconds` is just a safety net in case VAD never sees silence.
+
+All progress and error messages go to stderr, so only the refined prompt
+appears as the command output. Claude reads that output and responds to it
+as if you had typed it.
 
 ## Tip: prefer the global hotkey
 
