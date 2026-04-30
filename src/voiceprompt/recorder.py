@@ -124,8 +124,11 @@ class Recorder:
         # spin up the writer thread (so the WAV header matches reality).
         self.sample_rate = self._resolve_sample_rate(self.sample_rate)
 
+        # Path must be unique even when two recordings start within the same
+        # wall-clock second (e.g. rapid hotkey toggles, recovered daemon).
+        # Nanosecond resolution + PID guarantees no collision with mode="x".
         tmp_dir = Path(tempfile.gettempdir())
-        self._path = tmp_dir / f"voiceprompt-{int(time.time())}.wav"
+        self._path = tmp_dir / f"voiceprompt-{os.getpid()}-{time.time_ns()}.wav"
         self._stop_event.clear()
 
         self._stream = sd.InputStream(
