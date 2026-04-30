@@ -38,27 +38,22 @@ Restart Claude Code (or start a new session) so the skill loads.
 
 | Command                 | What it does                                                  |
 |-------------------------|---------------------------------------------------------------|
-| `/voiceprompt`          | Start the hotkey daemon in the background                     |
-| `/voiceprompt stop`     | Stop the daemon                                               |
+| `/voiceprompt`          | Record freely, auto-stop ~1.5s after you finish speaking      |
+| `/voiceprompt 60`       | Same, with a hard cap of 60 seconds (default cap is 120)      |
+| `/voiceprompt start`    | Start the global-hotkey daemon in the background              |
+| `/voiceprompt stop`     | Stop it                                                       |
 | `/voiceprompt status`   | Check whether the daemon is alive                             |
-| `/voiceprompt now`      | One-shot dictation without the daemon (auto-stops on silence) |
-| `/voiceprompt now 60`   | Same, hard-capped at 60 seconds                               |
 
 ## How it works
 
-The default `/voiceprompt` boots the global-hotkey daemon as a detached
-background process and returns. Once it's up, press **Ctrl+Space** from
-any window — including Claude Code's input — to start recording, and
-again to stop. The refined prompt is pasted into whichever window has
-focus when the cycle finishes.
+`/voiceprompt` calls `voiceprompt dictate --stdout` under the hood. Voice
+activity detection ends the recording about 1.5 s after you stop talking,
+so the duration is whatever you want — there's no fixed timer to wait out.
+`--max-seconds` is just a safety net in case VAD never sees silence.
 
-This means the slash command is a one-time bootstrap. After it succeeds,
-all dictation happens through the hotkey, which is a true toggle — you
-control exactly when to start and stop, with no fixed timer.
-
-If you'd rather not run a daemon, use `/voiceprompt now` for a single
-recording cycle. Voice-activity detection ends the recording ~1.5 s after
-you stop speaking, so duration is dictated by the speaker, not by a timer.
+All progress and error messages go to stderr, so only the refined prompt
+appears as the command output. Claude reads that output and responds to it
+as if you had typed it.
 
 ## Tip: prefer the global hotkey
 
