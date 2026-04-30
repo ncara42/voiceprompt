@@ -103,6 +103,21 @@ class HotkeyContext:
         with self._lock:
             return self._current_app is not None
 
+    def trigger_start(self) -> None:
+        """Fire the start event if not already recording."""
+        with self._lock:
+            app = self._current_app
+        if app is None:
+            self.start_event.set()
+
+    def trigger_stop(self) -> None:
+        """Stop a running recording."""
+        with self._lock:
+            app = self._current_app
+        if app is not None:
+            with contextlib.suppress(Exception):
+                app.exit(result=True)
+
     def on_hotkey(self) -> None:
         """Called from the pynput thread. Toggles between start and stop."""
         with self._lock:
@@ -152,4 +167,74 @@ def listen_simple(combo: str, on_press: Callable[[], None]):
         listener.start()
     except Exception as e:  # noqa: BLE001
         raise HotkeyError(f"Could not register hotkey '{combo}' ({pt_combo}): {e}") from e
+    return listener
+
+
+# pynput Key groups for modifier matching in listen_hold.
+def _pynput_mod_groups():
+    return {
+        "ctrl":  {keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r},
+        "shift": {keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r},
+        "alt":   {keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r},
+        "cmd":   {keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r},
+    }
+
+
+def listen_hold(combo: str, ctx: HotkeyContext):
+    """Push-to-talk listener: trigger_start on key-combo press, trigger_stop on release.
+
+    Unlike the toggle listener, holding the combo starts recording and releasing
+    any key in the combo stops it.
+    """
+    if not _PYNPUT_OK:
+        raise HotkeyError(import_error_hint())
+
+    parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
+    mod_groups = _pynput_mod_groups()
+
+    # Separate modifiers from the main (non-modifier) key.
+    req_mod_names = {_MODIFIER_ALIASES[p] for p in parts if p in _MODIFIER_ALIASES}
+    main_parts = [p for p in parts if p not in _MODIFIER_ALIASES]
+    main_str = main_parts[0] if main_parts else None
+
+    req_mod_groups = [g for name, g in mod_groups.items() if name in req_mod_names]
+
+    pressed: set = set()
+
+    def _matches_main(key: Any) -> bool:
+        if main_str is None:
+            return False
+        if main_str in _NAMED_KEYS:
+            try:
+                return key == getattr(keyboard.Key, main_str)  # type: ignore[union-attr]
+            except AttributeError:
+                return False
+        char = getattr(key, "char", None)
+        return char is not None and char.lower() == main_str
+
+    def _all_mods_down() -> bool:
+        return all(pressed & g for g in req_mod_groups)
+
+    def _is_combo_key(key: Any) -> bool:
+        if _matches_main(key):
+            return True
+        return any(key in g for g in req_mod_groups)
+
+    def on_press_cb(key: Any) -> None:
+        pressed.add(key)
+        if _matches_main(key) and _all_mods_down():
+            ctx.trigger_start()
+
+    def on_release_cb(key: Any) -> None:
+        if _is_combo_key(key) and ctx.has_running_app():
+            ctx.trigger_stop()
+        pressed.discard(key)
+
+    try:
+        listener = keyboard.Listener(  # type: ignore[union-attr]
+            on_press=on_press_cb, on_release=on_release_cb
+        )
+        listener.start()
+    except Exception as e:  # noqa: BLE001
+        raise HotkeyError(f"Could not register hold hotkey '{combo}': {e}") from e
     return listener

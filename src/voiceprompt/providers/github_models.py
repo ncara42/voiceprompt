@@ -221,6 +221,86 @@ def reformulate_text(
     )
 
 
+def _stream_chat_completion(cfg: Config, *, messages: list[dict[str, str]], max_tokens: int):
+    """Yield incremental text chunks via SSE from the GitHub Models streaming endpoint."""
+    body = {
+        "model": cfg.github_models_model,
+        "messages": messages,
+        "stream": True,
+    }
+    if _supports_temperature(cfg.github_models_model):
+        body["temperature"] = cfg.temperature
+    token_limit_key = _token_limit_key(cfg.github_models_model)
+    body[token_limit_key] = max_tokens
+    data = json.dumps(body).encode("utf-8")
+    req = request.Request(
+        API_URL,
+        data=data,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {_token(cfg)}",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": API_VERSION,
+        },
+    )
+    with request.urlopen(req, timeout=REQUEST_TIMEOUT_SECS) as response:
+        for raw_line in response:
+            line = raw_line.decode("utf-8", "replace").rstrip("\n\r")
+            if not line.startswith("data: "):
+                continue
+            payload_str = line[6:]
+            if payload_str.strip() == "[DONE]":
+                break
+            try:
+                payload = json.loads(payload_str)
+            except json.JSONDecodeError:
+                continue
+            choices = payload.get("choices")
+            if not isinstance(choices, list) or not choices:
+                continue
+            delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
+            content = delta.get("content", "") if isinstance(delta, dict) else ""
+            if content:
+                yield content
+
+
+def reformulate_text_stream(transcript: str, cfg: Config):
+    """Yield incremental text chunks from GitHub Models."""
+    user_text = _user_message(transcript, cfg.language)
+    messages = [
+        {"role": "system", "content": cfg.system_prompt},
+        {"role": "user", "content": user_text},
+    ]
+    delay = INITIAL_BACKOFF_SECS
+    last_error: BaseException | None = None
+    for attempt in range(DEFAULT_MAX_RETRIES):
+        try:
+            yield from _stream_chat_completion(cfg, messages=messages, max_tokens=cfg.max_output_tokens)
+            return
+        except error.HTTPError as e:
+            last_error = e
+            classified = _classify_http_error(e)
+            if isinstance(classified, AuthError):
+                raise classified from e
+            if isinstance(classified, QuotaExceededError):
+                if attempt == DEFAULT_MAX_RETRIES - 1:
+                    raise classified from e
+                time.sleep(min(classified.retry_after or delay, MAX_RETRY_SLEEP_SECS))
+            else:
+                if e.code < 500 or attempt == DEFAULT_MAX_RETRIES - 1:
+                    raise classified from e
+                time.sleep(delay)
+        except (error.URLError, TimeoutError) as e:
+            last_error = e
+            if attempt == DEFAULT_MAX_RETRIES - 1:
+                raise GithubModelsError(
+                    f"GitHub Models transient error after retries: {_redact(str(e))}"
+                ) from e
+            time.sleep(delay)
+        delay = min(delay * 2, MAX_BACKOFF_SECS)
+    raise GithubModelsError(_redact(str(last_error)) if last_error else "Unknown GitHub Models failure.")
+
+
 def quick_test(cfg: Config) -> str:
     """Tiny round-trip to verify the token/model work. Returns the model response."""
     try:

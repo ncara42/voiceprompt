@@ -39,8 +39,10 @@ dependencies = [
     # Cross-platform local STT: works on macOS (Intel + ARM), Linux, Windows.
     # CPU by default (int8); auto-uses CUDA float16 when an NVIDIA GPU is present.
     "faster-whisper>=1.0",
+    "av>=11,<14",  # av 14+ removed av.audio breaking faster-whisper
     "huggingface-hub>=0.24",
     "hf-transfer>=0.1.6",
+    "mlx-whisper>=0.4.0; sys_platform == 'darwin'",
     "pynput>=1.7.6",
     "pyperclip>=1.8.2",
     "platformdirs>=4.0",
@@ -60,9 +62,13 @@ dev = [
     "mypy>=1.10",
     "pre-commit>=3.7",
 ]
+menubar = [
+    "rumps>=0.4.0",
+]
 
 [project.scripts]
 voiceprompt = "voiceprompt.cli:app"
+voiceprompt-menubar = "voiceprompt.menubar:run"
 
 [dependency-groups]
 dev = [

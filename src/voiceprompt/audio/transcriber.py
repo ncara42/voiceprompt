@@ -1,27 +1,19 @@
-"""Local speech-to-text via faster-whisper.
+"""Local speech-to-text via faster-whisper or mlx-whisper.
 
-Cross-platform speech recognition that runs offline on CPU or GPU. Works on
-macOS (Intel + Apple Silicon), Linux, and Windows without per-OS code paths.
+Two engines are supported:
+  - faster-whisper  (CTranslate2): cross-platform, CPU int8 or CUDA float16.
+  - mlx-whisper     (Apple MLX):   macOS Apple Silicon only, runs on the Neural
+                                   Engine — 4-5× faster than CPU on M-chips.
 
-Engine: ``faster-whisper`` (CTranslate2 reimplementation of Whisper). About
-4x faster than ``openai-whisper`` and uses ~50% less memory. Models are
-downloaded on demand from Hugging Face on first use.
-
-Default model: ``distil-large-v3`` — distilled Whisper-large-v3, ~95% of
-parent quality at roughly 2x the speed and half the size. Best speed/quality
-tradeoff for CPU inference, which is what most users have.
-
-Compute precision is selected automatically:
-  - CUDA available → ``float16`` (best speed on NVIDIA GPUs)
-  - everywhere else → ``int8`` (fastest CPU inference; minimal quality loss)
+MLX models are identified by the ``mlx-`` prefix (e.g. ``mlx-large-v3-turbo``).
+All other model names are routed through faster-whisper.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 
-# Enable hf-transfer (Rust-based parallel downloader) before huggingface_hub loads.
-# Substantially faster on first download; opt out with HF_HUB_ENABLE_HF_TRANSFER=0.
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
 import warnings  # noqa: E402
@@ -32,41 +24,84 @@ from huggingface_hub import snapshot_download  # noqa: E402
 
 DEFAULT_MODEL = "distil-large-v3"
 
-# Curated list shown in the settings menu. The values are the short names that
-# faster-whisper accepts directly (it resolves them to the right HF repo).
-MODELS: list[tuple[str, str]] = [
-    ("distil-large-v3", "distilled large-v3 — best speed/quality balance (recommended)"),
-    ("large-v3", "best accuracy, slower on CPU"),
-    ("medium", "good balance, smaller than large"),
-    ("small", "fast, decent accuracy"),
-    ("base", "very fast, basic accuracy"),
-    ("tiny", "fastest, lowest accuracy"),
+# ── faster-whisper models ─────────────────────────────────────────────────────
+
+_FW_MODELS: list[tuple[str, str]] = [
+    ("distil-large-v3", "distilled large-v3 — fast, English only"),
+    ("large-v3",        "best accuracy, multilingual, slower on CPU"),
+    ("medium",          "good balance, multilingual"),
+    ("small",           "fast, multilingual, decent accuracy"),
+    ("base",            "very fast, multilingual, basic accuracy"),
+    ("tiny",            "fastest, multilingual, lowest accuracy"),
 ]
 
-# Approximate on-disk sizes (CTranslate2 int8 quantized weights + tokenizer).
-MODEL_SIZES: dict[str, str] = {
-    "tiny": "~75 MB",
-    "base": "~145 MB",
-    "small": "~480 MB",
-    "medium": "~1.5 GB",
-    "large-v3": "~3.0 GB",
-    "distil-large-v3": "~1.5 GB",
-}
-
-# Hugging Face repo ids used to check on-disk presence without loading the model.
-# faster-whisper resolves the same names internally; we keep this map only for
-# the cache-presence check.
-_HF_REPO: dict[str, str] = {
-    "tiny": "Systran/faster-whisper-tiny",
-    "base": "Systran/faster-whisper-base",
-    "small": "Systran/faster-whisper-small",
-    "medium": "Systran/faster-whisper-medium",
-    "large-v3": "Systran/faster-whisper-large-v3",
+_FW_HF_REPO: dict[str, str] = {
+    "tiny":          "Systran/faster-whisper-tiny",
+    "base":          "Systran/faster-whisper-base",
+    "small":         "Systran/faster-whisper-small",
+    "medium":        "Systran/faster-whisper-medium",
+    "large-v3":      "Systran/faster-whisper-large-v3",
     "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
 }
 
+_FW_SIZES: dict[str, str] = {
+    "tiny":          "~75 MB",
+    "base":          "~145 MB",
+    "small":         "~480 MB",
+    "medium":        "~1.5 GB",
+    "large-v3":      "~3.0 GB",
+    "distil-large-v3": "~1.5 GB",
+}
+
+# ── mlx-whisper models (Apple Silicon only) ───────────────────────────────────
+
+_MLX_HF_REPO: dict[str, str] = {
+    "mlx-large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+    "mlx-large-v3":       "mlx-community/whisper-large-v3-mlx",
+    "mlx-small":          "mlx-community/whisper-small-mlx",
+}
+
+_MLX_SIZES: dict[str, str] = {
+    "mlx-large-v3-turbo": "~810 MB",
+    "mlx-large-v3":       "~1.5 GB",
+    "mlx-small":          "~250 MB",
+}
+
+_MLX_DESCRIPTIONS: dict[str, str] = {
+    "mlx-large-v3-turbo": "Apple Silicon · multilingual · fast (recommended)",
+    "mlx-large-v3":       "Apple Silicon · multilingual · highest accuracy",
+    "mlx-small":          "Apple Silicon · multilingual · very fast, lighter",
+}
+
+# ── Combined public lists ─────────────────────────────────────────────────────
+
+def _build_models_list() -> list[tuple[str, str]]:
+    models = list(_FW_MODELS)
+    if sys.platform == "darwin":
+        mlx_entries = [(k, v) for k, v in _MLX_DESCRIPTIONS.items()]
+        # Insert MLX models at the top so they're the first choice on macOS
+        models = mlx_entries + models
+    return models
+
+
+MODELS: list[tuple[str, str]] = _build_models_list()
+
+ENGLISH_ONLY_MODELS: frozenset[str] = frozenset({"distil-large-v3"})
+
+MODEL_SIZES: dict[str, str] = {**_FW_SIZES, **_MLX_SIZES}
+
+
+def is_english_only(model_name: str) -> bool:
+    return model_name in ENGLISH_ONLY_MODELS
+
+
+def is_mlx_model(model_name: str) -> bool:
+    return model_name in _MLX_HF_REPO
+
+
 VALID_MODELS: tuple[str, ...] = tuple(name for name, _ in MODELS)
 
+# ── Errors ────────────────────────────────────────────────────────────────────
 
 class TranscriptionError(Exception):
     """Base error for STT failures."""
@@ -75,32 +110,25 @@ class TranscriptionError(Exception):
 class ModelDownloadError(TranscriptionError):
     """Model weights couldn't be downloaded (no network on first run)."""
 
+# ── faster-whisper engine ─────────────────────────────────────────────────────
 
-_model_cache: dict[str, object] = {}
-_cache_lock = Lock()
+_fw_model_cache: dict[str, object] = {}
+_fw_cache_lock = Lock()
 
 
-def _import_whisper():  # noqa: ANN202
-    """Import faster-whisper lazily so the package can be inspected without it."""
+def _import_faster_whisper():  # noqa: ANN202
     try:
         from faster_whisper import WhisperModel  # noqa: PLC0415
     except ImportError as e:
         raise TranscriptionError(
-            "faster-whisper is not installed. "
-            f"Install with `pip install faster-whisper`. Underlying error: {e}"
+            f"faster-whisper is not installed. Install with `pip install faster-whisper`. Error: {e}"
         ) from e
     return WhisperModel
 
 
 def _select_compute() -> tuple[str, str]:
-    """Pick (device, compute_type) for the current host.
-
-    Prefers CUDA float16 when available; otherwise falls back to CPU int8 which
-    is the fastest CTranslate2 path on commodity CPUs and Apple Silicon.
-    """
     try:
         import ctranslate2  # noqa: PLC0415
-
         if ctranslate2.get_cuda_device_count() > 0:
             return "cuda", "float16"
     except Exception:  # noqa: BLE001
@@ -108,42 +136,27 @@ def _select_compute() -> tuple[str, str]:
     return "cpu", "int8"
 
 
-def _load_model(model_name: str):  # noqa: ANN202
-    """Lazy-load and cache the WhisperModel."""
-    with _cache_lock:
-        if model_name not in _model_cache:
-            WhisperModel = _import_whisper()
+def _load_fw_model(model_name: str):  # noqa: ANN202
+    with _fw_cache_lock:
+        if model_name not in _fw_model_cache:
+            WhisperModel = _import_faster_whisper()
             device, compute_type = _select_compute()
             try:
-                _model_cache[model_name] = WhisperModel(
+                _fw_model_cache[model_name] = WhisperModel(
                     model_name, device=device, compute_type=compute_type,
                 )
             except Exception as e:  # noqa: BLE001
                 msg = str(e).lower()
                 if any(t in msg for t in ("download", "connection", "huggingface", "resolve", "network")):
-                    raise ModelDownloadError(
-                        f"Could not download Whisper model '{model_name}': {e}"
-                    ) from e
-                raise TranscriptionError(
-                    f"Could not load Whisper '{model_name}': {e}"
-                ) from e
-        return _model_cache[model_name]
+                    raise ModelDownloadError(f"Could not download Whisper model '{model_name}': {e}") from e
+                raise TranscriptionError(f"Could not load Whisper '{model_name}': {e}") from e
+        return _fw_model_cache[model_name]
 
 
-def transcribe(wav_path: Path, *, model_name: str, language: str) -> str:
-    """Transcribe a WAV file. Returns plain text.
-
-    ``language`` of ``"auto"`` triggers Whisper's built-in language detection.
-    Any other value (e.g. ``"es"``, ``"en"``) is passed as a hint, which is
-    faster and more accurate than auto-detection when the language is known.
-    """
-    model = _load_model(model_name)
+def _transcribe_fw(wav_path: Path, *, model_name: str, language: str) -> str:
+    model = _load_fw_model(model_name)
     lang_hint = None if language in ("auto", "", None) else language
-
-    # distil-* models require condition_on_previous_text=False per the official
-    # distil-whisper guidance — they were trained with that flag off.
     cond_prev = not model_name.startswith("distil-")
-
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -153,22 +166,68 @@ def transcribe(wav_path: Path, *, model_name: str, language: str) -> str:
                 condition_on_previous_text=cond_prev,
                 vad_filter=True,
             )
-            text = " ".join(seg.text for seg in segments).strip()
+            return " ".join(seg.text for seg in segments).strip()
     except Exception as e:  # noqa: BLE001
         raise TranscriptionError(f"Transcription failed: {e}") from e
 
-    return text
+# ── mlx-whisper engine ────────────────────────────────────────────────────────
+
+def _transcribe_mlx(wav_path: Path, *, model_name: str, language: str) -> str:
+    import contextlib  # noqa: PLC0415
+    import io  # noqa: PLC0415
+
+    try:
+        import mlx_whisper  # noqa: PLC0415
+    except ImportError as e:
+        raise TranscriptionError(
+            "mlx-whisper is not installed. Run: pip install mlx-whisper"
+        ) from e
+
+    hf_repo = _MLX_HF_REPO.get(model_name, model_name)
+    lang_hint = None if language in ("auto", "", None) else language
+
+    try:
+        # mlx_whisper prints tqdm bars to stderr; suppress them.
+        with contextlib.redirect_stderr(io.StringIO()):
+            result = mlx_whisper.transcribe(
+                str(wav_path),
+                path_or_hf_repo=hf_repo,
+                language=lang_hint,
+                verbose=False,
+            )
+    except Exception as e:  # noqa: BLE001
+        raise TranscriptionError(f"MLX transcription failed: {e}") from e
+
+    return (result.get("text") or "").strip()
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def transcribe(wav_path: Path, *, model_name: str, language: str) -> str:
+    """Transcribe a WAV file. Routes to mlx-whisper or faster-whisper based on model name."""
+    if is_mlx_model(model_name):
+        if sys.platform != "darwin":
+            raise TranscriptionError(
+                f"Model '{model_name}' requires Apple Silicon (macOS). "
+                "Change the transcription model in Settings → Transcription → Model."
+            )
+        return _transcribe_mlx(wav_path, model_name=model_name, language=language)
+    return _transcribe_fw(wav_path, model_name=model_name, language=language)
 
 
 def is_model_cached(model_name: str) -> bool:
-    """Check if the model has been loaded into memory in this process."""
-    with _cache_lock:
-        return model_name in _model_cache
+    """True if the model is loaded in memory in this process."""
+    with _fw_cache_lock:
+        return model_name in _fw_model_cache
 
 
 def is_model_on_disk(model_name: str) -> bool:
-    """Return True if the model weights are already in the HuggingFace cache."""
-    repo = _HF_REPO.get(model_name)
+    """True if model weights are already in the HuggingFace cache."""
+    if is_mlx_model(model_name):
+        if sys.platform != "darwin":
+            return False
+        repo = _MLX_HF_REPO.get(model_name)
+    else:
+        repo = _FW_HF_REPO.get(model_name)
     if not repo:
         return False
     try:
@@ -179,21 +238,20 @@ def is_model_on_disk(model_name: str) -> bool:
 
 
 def model_download_size(model_name: str) -> str:
-    """Human-readable approximate download size, or empty string if unknown."""
     return MODEL_SIZES.get(model_name, "")
 
 
 def download_model(model_name: str) -> Path:
-    """Download model weights from HuggingFace to the local cache. Returns path."""
-    repo = _HF_REPO.get(model_name)
+    """Download model weights from HuggingFace. Returns local path."""
+    if is_mlx_model(model_name):
+        repo = _MLX_HF_REPO.get(model_name)
+    else:
+        repo = _FW_HF_REPO.get(model_name)
     if not repo:
         raise ModelDownloadError(
-            f"Unknown Whisper model id '{model_name}'. "
-            f"Valid options: {', '.join(VALID_MODELS)}."
+            f"Unknown model '{model_name}'. Valid options: {', '.join(VALID_MODELS)}."
         )
     try:
         return Path(snapshot_download(repo))
     except Exception as e:  # noqa: BLE001
-        raise ModelDownloadError(
-            f"Could not download Whisper model '{model_name}': {e}"
-        ) from e
+        raise ModelDownloadError(f"Could not download model '{model_name}': {e}") from e

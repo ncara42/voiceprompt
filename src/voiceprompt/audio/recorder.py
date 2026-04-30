@@ -122,7 +122,22 @@ class Recorder:
 
         # Resolve a sample rate the input device actually supports BEFORE we
         # spin up the writer thread (so the WAV header matches reality).
-        self.sample_rate = self._resolve_sample_rate(self.sample_rate)
+        #
+        # Bluetooth devices (AirPods, headsets) may temporarily show "no input
+        # device" while macOS switches from output-only to HFP mode. We retry
+        # up to 3 times with increasing delays to let that transition complete.
+        _no_input: NoInputDeviceError | None = None
+        for _sleep in (0, 0.6, 1.2, 1.8):
+            if _sleep:
+                time.sleep(_sleep)
+            try:
+                self.sample_rate = self._resolve_sample_rate(self.sample_rate)
+                _no_input = None
+                break
+            except NoInputDeviceError as _e:
+                _no_input = _e
+        if _no_input is not None:
+            raise _no_input
 
         # Path must be unique even when two recordings start within the same
         # wall-clock second (e.g. rapid hotkey toggles, recovered daemon).

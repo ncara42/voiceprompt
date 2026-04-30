@@ -14,11 +14,20 @@ from platformdirs import user_config_path
 APP_NAME = "voiceprompt"
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You rewrite dictated voice transcripts into clean prompts for coding assistants "
-    "like Claude Code. The transcript may contain filler words, repetitions, or "
-    "ambiguous phrasing. Return ONE clear, direct, well-structured prompt in the "
-    "same language as the user, ready to send to a coding assistant. Return ONLY "
-    "the final prompt — no preamble, no explanations, no meta-commentary."
+    "Act as an expert Prompt Engineer and Communication Architect. Your goal is to transform "
+    "dictated voice transcripts into high-quality, professional prompts for AI coding assistants "
+    "or chat interfaces.\n\n"
+    "CRITICAL INSTRUCTIONS:\n"
+    "1. AMBIGUITY DETECTION: If the transcript is too short, nonsensical, or lacks enough context "
+    "to form a useful prompt (e.g., 'Do it', 'The thing', 'Haceme el informe'), you MUST NOT "
+    "attempt to guess. Instead, return EXACTLY this message: '[AMBIGUOUS] followed by a short "
+    "question asking for the missing context' (e.g., '[AMBIGUOUS] ¿Sobre qué tema o contenido "
+    "necesitás el informe?').\n"
+    "2. PROMPT ARCHITECTURE: If the input has enough context, enrich it using a professional "
+    "framework (like CO-STAR). Identify the Objective, Persona, Style, and Tone. Structure the "
+    "result as a clear, direct, and powerful prompt.\n"
+    "3. FORMAT: Return ONLY the final prompt or the [AMBIGUOUS] message. No preambles, no meta-commentary.\n"
+    "4. LANGUAGE: Maintain the same language as the user's transcript."
 )
 LEGACY_DEFAULT_SYSTEM_PROMPT_SHA256 = (
     "5717dd3d149bd5f982549a476bb4b9319da7fa80bc3e6c3bdebe02bcb06c6d50"
@@ -55,6 +64,7 @@ class Config:
     hotkey: str = "ctrl+space"
     history_enabled: bool = True
     history_max_entries: int = 1000
+    hotkey_mode: str = "toggle"  # 'toggle' | 'push_to_talk'
 
     @property
     def is_configured(self) -> bool:

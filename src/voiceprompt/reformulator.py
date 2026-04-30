@@ -88,6 +88,29 @@ def _short_github_model(model_id: str) -> str:
     return model_id.split("/", 1)[1] if "/" in model_id else model_id
 
 
+def reformulate_stream(transcript: str, cfg: Config):
+    """Yield incremental text chunks from the active provider."""
+    p = active_provider(cfg)
+    if p == "ollama":
+        from voiceprompt.providers import ollama as ollama_mod  # noqa: PLC0415
+
+        yield from ollama_mod.reformulate_text_stream(transcript, cfg)
+        return
+    if p == "gemini":
+        from voiceprompt.providers import gemini as gemini_mod  # noqa: PLC0415
+
+        yield from gemini_mod.reformulate_text_stream(transcript, cfg)
+        return
+    if p == "github_models":
+        from voiceprompt.providers import github_models as github_models_mod  # noqa: PLC0415
+
+        yield from github_models_mod.reformulate_text_stream(transcript, cfg)
+        return
+    from voiceprompt.providers import claude as claude_mod  # noqa: PLC0415
+
+    yield from claude_mod.reformulate_text_stream(transcript, cfg)
+
+
 def reformulate_text(transcript: str, cfg: Config) -> str:
     p = active_provider(cfg)
     if p == "ollama":

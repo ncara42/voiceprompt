@@ -443,8 +443,10 @@ def _settings_behavior(config: Config) -> None:
     while True:
         _render_home(config, subtitle="Settings › Behavior", compact=True)
         temp_label = _temperature_label(config.temperature)
+        mode_hint = "push-to-talk" if config.hotkey_mode == "push_to_talk" else "toggle"
         choices = [
             sel.Choice("Hotkey", "hotkey", hint=config.hotkey),
+            sel.Choice("Hotkey mode", "hotkey_mode", hint=mode_hint),
             sel.Choice(
                 "Auto-paste into active app",
                 "clipboard",
@@ -469,6 +471,8 @@ def _settings_behavior(config: Config) -> None:
             return
         if choice == "hotkey":
             _settings_capture_hotkey(config)
+        elif choice == "hotkey_mode":
+            _settings_pick_hotkey_mode(config)
         elif choice == "clipboard":
             config.auto_copy_clipboard = not config.auto_copy_clipboard
             cfg_mod.save(config)
@@ -536,6 +540,26 @@ def _settings_pick_temperature(config: Config) -> None:
         config.temperature = new_temp
         cfg_mod.save(config)
         _saved_flash()
+
+
+def _settings_pick_hotkey_mode(config: Config) -> None:
+    _render_home(config, subtitle="Settings › Behavior › Hotkey mode", compact=True)
+    picked = sel.select(
+        "Hotkey mode",
+        [
+            sel.Choice("Toggle  (press once to start, press again to stop)", "toggle"),
+            sel.Choice("Push-to-talk  (hold to record, release to stop)", "push_to_talk"),
+        ],
+        default=config.hotkey_mode,
+        back_value=None,
+        show_footer=False,
+    )
+    if picked and picked != config.hotkey_mode:
+        config.hotkey_mode = picked
+        cfg_mod.save(config)
+        _saved_flash()
+        console.print("  [hint]Restart the listen daemon for the change to take effect.[/hint]")
+        _pause()
 
 
 def _settings_capture_hotkey(config: Config) -> None:
@@ -1009,14 +1033,20 @@ def _action_listen(
         return
 
     combo = hotkey_override or config.hotkey
+    push_to_talk = config.hotkey_mode == "push_to_talk"
     ctx = hk.HotkeyContext()
     try:
-        listener = hk.listen(combo, ctx)
+        listener = hk.listen_hold(combo, ctx) if push_to_talk else hk.listen(combo, ctx)
     except hk.HotkeyError as e:
         console.print(f"  [err]Could not register hotkey:[/err] {e}")
         _pause()
         return
 
+    mode_hint = (
+        "Hold the hotkey to record, release to stop."
+        if push_to_talk
+        else "Press the hotkey from any app to start recording, then again to stop."
+    )
     console.clear()
     banner(_get_version())
     console.print(_panel(
@@ -1024,7 +1054,7 @@ def _action_listen(
             ("Hotkey active · ", "ok"),
             (combo, "accent"),
             ("\n\n", ""),
-            ("Press the hotkey from any app to start recording, then again to stop.\n", "value"),
+            (mode_hint + "\n", "value"),
             ("The refined prompt is pasted into whichever window has focus.\n", "value"),
             ("Ctrl+C in this window quits the daemon.", "hint"),
         ),
@@ -1201,38 +1231,57 @@ class _RefinementResult:
 
 
 def _refine_transcript(config: Config, transcript: str) -> _RefinementResult | None:
-    """Send the transcript to the active AI provider for refinement.
+    """Send the transcript to the active AI provider for refinement, streaming output live."""
+    from rich.live import Live  # noqa: PLC0415
 
-    Returns the refined prompt and timing info, or ``None`` on failure.
-    """
     provider_label = reformulator.PROVIDER_LABELS[reformulator.active_provider(config)]
+    short_model = reformulator.short_model(config)
     started = time.monotonic()
+    accumulated = ""
 
-    final_prompt: str | None = None
-    with console.status(
-        f"[brand]refining · {reformulator.short_model(config)}…[/brand]",
-        spinner="dots",
-    ):
-        try:
-            final_prompt = reformulator.reformulate_text(transcript, config)
-        except reformulator.AuthError as e:
-            console.print(_error_panel(
-                "Authentication failed", str(e),
-                hint="Check your API key in Settings.",
-            ))
-        except reformulator.QuotaExceededError as e:
-            hint = (
-                f"Retry in ~{e.retry_after:.0f}s."
-                if e.retry_after
-                else "Switch models or wait a moment."
-            )
-            console.print(_error_panel("Quota exceeded", str(e), hint=hint))
-        except reformulator.ProviderError as e:
-            console.print(_error_panel(f"{provider_label} error", str(e)))
+    def _build_panel(text: str, *, done: bool = False) -> Panel:
+        title = (
+            f"[ok]refined prompt[/ok]"
+            if done
+            else f"[brand]refining · {short_model}…[/brand]"
+        )
+        return Panel(
+            Text(text or " ", style="value"),
+            border_style="ok" if done else "brand",
+            title=title,
+            title_align="left",
+            padding=(1, 2),
+        )
 
-    if final_prompt is None:
+    error_panel: Panel | None = None
+    try:
+        with Live(_build_panel(""), console=console, refresh_per_second=12) as live:
+            for chunk in reformulator.reformulate_stream(transcript, config):
+                accumulated += chunk
+                live.update(_build_panel(accumulated))
+            if accumulated:
+                live.update(_build_panel(accumulated, done=True))
+    except reformulator.AuthError as e:
+        error_panel = _error_panel("Authentication failed", str(e), hint="Check your API key in Settings.")
+    except reformulator.QuotaExceededError as e:
+        hint = (
+            f"Retry in ~{e.retry_after:.0f}s."
+            if e.retry_after
+            else "Switch models or wait a moment."
+        )
+        error_panel = _error_panel("Quota exceeded", str(e), hint=hint)
+    except reformulator.ProviderError as e:
+        error_panel = _error_panel(f"{provider_label} error", str(e))
+
+    if error_panel is not None:
+        console.print(error_panel)
         return None
-    return _RefinementResult(prompt=final_prompt, elapsed=time.monotonic() - started)
+
+    prompt = accumulated.strip()
+    if not prompt:
+        console.print(_error_panel(f"{provider_label} error", "Empty response from provider."))
+        return None
+    return _RefinementResult(prompt=prompt, elapsed=time.monotonic() - started)
 
 
 def _deliver_prompt(
@@ -1244,25 +1293,13 @@ def _deliver_prompt(
     total_secs: float,
     paste: bool,
 ) -> None:
-    """Display the final prompt, copy to clipboard, and optionally paste."""
+    """Copy to clipboard and optionally paste. The prompt panel is already shown by the streamer."""
     word_count = len(prompt.split())
-    meta = (
-        f"[hint]{record_secs:.1f}s rec · "
+    console.print(
+        f"  [hint]{record_secs:.1f}s rec · "
         f"{refine_secs:.1f}s {reformulator.active_provider(config)} · "
         f"{total_secs:.1f}s total · "
         f"{word_count} words[/hint]"
-    )
-    console.print()
-    console.print(
-        Panel(
-            Text(prompt, style="value"),
-            border_style="ok",
-            title="[ok]refined prompt[/ok]",
-            subtitle=meta,
-            subtitle_align="right",
-            title_align="left",
-            padding=(1, 2),
-        )
     )
 
     copied = False
@@ -1311,6 +1348,18 @@ def _action_dictate(
             _pause()
         return
 
+    # Warn if the chosen model is English-only but the user speaks another language.
+    if (
+        transcriber.is_english_only(config.transcription_model)
+        and config.language not in ("auto", "en", "")
+    ):
+        console.print(
+            f"\n  [warn][!] '{config.transcription_model}' only transcribes English.[/warn]\n"
+            f"  [hint]Your language is set to [/hint][value]{config.language}[/value][hint]."
+            f" Switch to [/hint][value]large-v3[/value][hint] or [/hint][value]medium[/value]"
+            f"[hint] in Settings → Transcription → Model.[/hint]\n"
+        )
+
     started = time.monotonic()
 
     # 1. Record ───────────────────────────────────────────────────────────────
@@ -1334,6 +1383,21 @@ def _action_dictate(
     with contextlib.suppress(OSError):
         recording.wav_path.unlink(missing_ok=True)
     if refinement is None:
+        if not exit_after:
+            _pause()
+        return
+
+    # Check for ambiguity detection
+    if refinement.prompt.startswith("[AMBIGUOUS]"):
+        question = refinement.prompt.replace("[AMBIGUOUS]", "").strip()
+        console.print()
+        console.print(
+            _error_panel(
+                "Context needed",
+                question or "The instruction is too vague to form a good prompt.",
+                hint="Try dictating again with more details (e.g., 'Write a report about yesterday's sales').",
+            )
+        )
         if not exit_after:
             _pause()
         return
@@ -1482,19 +1546,29 @@ def _render_status(config: Config, *, subtitle: str | None = None) -> None:
     )
 
     transcription_cached = transcriber.is_model_on_disk(config.transcription_model)
-    transcription_text = Text.assemble(
+    transcription_parts = [
         Text(_short_transcription_model(config.transcription_model), style="value"),
         Text("  ·  ", style="hint"),
         Text("cached", style="ok2") if transcription_cached else Text("not downloaded", style="warn"),
-    )
+    ]
+    if transcriber.is_english_only(config.transcription_model):
+        transcription_parts += [Text("  ·  ", style="hint"), Text("English only", style="warn")]
+    transcription_text = Text.assemble(*transcription_parts)
 
     grid = Table.grid(padding=(0, 2), expand=False)
     grid.add_column(style="hint", justify="right")
     grid.add_column()
+    hotkey_mode_label = "push-to-talk" if config.hotkey_mode == "push_to_talk" else "toggle"
     grid.add_row("state", state_text)
     grid.add_row("provider", provider_text)
     grid.add_row("transcription", transcription_text)
-    grid.add_row("hotkey", Text(config.hotkey, style="value"))
+    grid.add_row(
+        "hotkey",
+        Text.assemble(
+            Text(config.hotkey, style="value"),
+            Text(f"  ·  {hotkey_mode_label}", style="hint"),
+        ),
+    )
     grid.add_row("language", Text(config.language, style="value"))
 
     title_text = "[accent2]status[/accent2]"

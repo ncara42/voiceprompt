@@ -168,6 +168,48 @@ def reformulate_text(
     raise GeminiError(_redact(str(last_error)) if last_error else "Unknown Gemini failure.")
 
 
+def reformulate_text_stream(transcript: str, cfg: Config):
+    """Yield incremental text chunks from Gemini."""
+    client = _client(cfg)
+    user_text = _user_message(transcript, cfg.language)
+    config = genai_types.GenerateContentConfig(
+        system_instruction=cfg.system_prompt,
+        temperature=cfg.temperature,
+        max_output_tokens=cfg.max_output_tokens,
+    )
+    delay = INITIAL_BACKOFF_SECS
+    last_error: BaseException | None = None
+    for attempt in range(DEFAULT_MAX_RETRIES):
+        try:
+            for chunk in client.models.generate_content_stream(
+                model=cfg.gemini_model,
+                contents=user_text,
+                config=config,
+            ):
+                text = getattr(chunk, "text", None)
+                if text:
+                    yield text
+            return
+        except genai_errors.ClientError as e:
+            last_error = e
+            classified = _classify(e)
+            if isinstance(classified, AuthError):
+                raise classified from e
+            if isinstance(classified, QuotaExceededError):
+                if attempt == DEFAULT_MAX_RETRIES - 1:
+                    raise classified from e
+                time.sleep(min(classified.retry_after or delay, MAX_RETRY_SLEEP_SECS))
+            else:
+                raise classified from e
+        except (genai_errors.ServerError, genai_errors.APIError) as e:
+            last_error = e
+            if attempt == DEFAULT_MAX_RETRIES - 1:
+                raise GeminiError(f"Gemini transient error after retries: {_redact(str(e))}") from e
+            time.sleep(delay)
+        delay = min(delay * 2, MAX_BACKOFF_SECS)
+    raise GeminiError(_redact(str(last_error)) if last_error else "Unknown Gemini failure.")
+
+
 def quick_test(cfg: Config) -> str:
     """Tiny round-trip to verify the API key/model work. Returns Gemini's response."""
     client = _client(cfg)

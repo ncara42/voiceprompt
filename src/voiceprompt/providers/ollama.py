@@ -179,6 +179,49 @@ def reformulate_text(
     raise OllamaError(_redact(str(last_error)) if last_error else "Unknown Ollama failure.")
 
 
+def reformulate_text_stream(transcript: str, cfg: Config):
+    """Yield incremental text chunks from Ollama Cloud."""
+    client = _client(cfg)
+    user_text = _user_message(transcript, cfg.language)
+    delay = INITIAL_BACKOFF_SECS
+    last_error: BaseException | None = None
+    for attempt in range(DEFAULT_MAX_RETRIES):
+        try:
+            for chunk in client.chat(
+                model=cfg.ollama_model,
+                messages=[
+                    {"role": "system", "content": cfg.system_prompt},
+                    {"role": "user", "content": user_text},
+                ],
+                options={"temperature": cfg.temperature, "num_predict": cfg.max_output_tokens},
+                stream=True,
+            ):
+                content = getattr(getattr(chunk, "message", None), "content", "") or ""
+                if content:
+                    yield content
+            return
+        except ollama_sdk.ResponseError as e:
+            last_error = e
+            classified = _classify(e)
+            if isinstance(classified, AuthError):
+                raise classified from e
+            if isinstance(classified, QuotaExceededError):
+                if attempt == DEFAULT_MAX_RETRIES - 1:
+                    raise classified from e
+                time.sleep(min(classified.retry_after or delay, MAX_RETRY_SLEEP_SECS))
+            else:
+                if attempt == DEFAULT_MAX_RETRIES - 1:
+                    raise classified from e
+                time.sleep(delay)
+        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as e:
+            last_error = e
+            if attempt == DEFAULT_MAX_RETRIES - 1:
+                raise OllamaError(f"Ollama transient error after retries: {_redact(str(e))}") from e
+            time.sleep(delay)
+        delay = min(delay * 2, MAX_BACKOFF_SECS)
+    raise OllamaError(_redact(str(last_error)) if last_error else "Unknown Ollama failure.")
+
+
 def quick_test(cfg: Config) -> str:
     """Tiny round-trip to verify the API key/model work. Returns Ollama's response."""
     client = _client(cfg)

@@ -320,6 +320,11 @@ def _dictate_headless(config, *, max_seconds: int) -> None:
         _err("empty response from AI provider.")
         raise typer.Exit(code=6)
 
+    if prompt.startswith("[AMBIGUOUS]"):
+        question = prompt.replace("[AMBIGUOUS]", "").strip()
+        _err(f"Context needed: {question or 'Instruction is too vague.'}")
+        raise typer.Exit(code=7)
+
     if config.history_enabled:
         hist.log(
             transcript=transcript,
@@ -685,6 +690,30 @@ def _process_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+@app.command("menubar")
+def menubar_cmd() -> None:
+    """macOS menu bar app (requires: pip install voiceprompt-cli[menubar]).
+
+    Shows a status indicator in the macOS menu bar. The icon changes while
+    recording (⏺) and processing (⟳). A macOS notification is sent when the
+    prompt is ready. Requires the same macOS permissions as `voiceprompt listen`.
+    """
+    import sys  # noqa: PLC0415
+
+    if sys.platform != "darwin":
+        console.print("[err]The menu bar app is only supported on macOS.[/err]")
+        raise typer.Exit(code=1)
+    try:
+        from voiceprompt.menubar import run as menubar_run  # noqa: PLC0415
+    except ImportError:
+        console.print(
+            "[err]rumps is not installed.[/err] "
+            "Run: [value]pip install voiceprompt-cli[menubar][/value]"
+        )
+        raise typer.Exit(code=1) from None
+    menubar_run()
 
 
 @app.command("listen")
