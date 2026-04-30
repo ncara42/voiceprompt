@@ -537,7 +537,7 @@ def _action_listen(
     hotkey_override: str | None = None,
     target: str | None = None,
     no_paste: bool = False,
-    no_claude: bool = False,
+    no_agent: bool = False,
 ) -> None:
     """Run the global-hotkey daemon loop. Shared by the menu and ``voiceprompt listen``."""
     from voiceprompt import hotkey as hk  # noqa: PLC0415
@@ -579,14 +579,15 @@ def _action_listen(
 
             target_app: str | None = None
             target_tty: str | None = None
+            agent_label: str | None = None
             if not no_paste:
                 if target:
                     target_app = target
                 else:
-                    if not no_claude:
-                        claude_target = inject.find_claude_target()
-                        if claude_target is not None:
-                            _label, target_tty = claude_target
+                    if not no_agent:
+                        agent = inject.find_agent_target()
+                        if agent is not None:
+                            agent_label, target_tty = agent
                     if target_tty is None:
                         target_app = inject.get_frontmost_app()
 
@@ -594,9 +595,12 @@ def _action_listen(
             banner(_get_version())
             target_text: Text
             if target_tty:
+                # Strip the "(pid …, /dev/ttysN)" trailing detail from the label
+                # for the panel — keep just the agent name on the front line.
+                pretty_label = agent_label.split(" (")[0] if agent_label else "Agent CLI"
                 target_text = Text.assemble(
                     ("target  ", "hint"),
-                    ("Claude Code ", "accent"),
+                    (f"{pretty_label} ", "accent"),
                     (f"({target_tty})", "hint"),
                 )
             elif target_app:
@@ -833,11 +837,15 @@ def _action_dictate(
             )
 
     if copied and has_target:
-        ok = inject.paste_to_claude(target_tty) if target_tty else inject.paste_to(target_app)
+        ok = (
+            inject.paste_to_terminal_session(target_tty)
+            if target_tty
+            else inject.paste_to(target_app)
+        )
         if not ok:
             if target_tty:
                 console.print(
-                    "\n  [warn]Could not focus the Claude session.[/warn] "
+                    "\n  [warn]Could not focus the agent's terminal session.[/warn] "
                     "[hint]Paste manually with ⌘V wherever you want.[/hint]"
                 )
             else:

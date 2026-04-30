@@ -46,7 +46,7 @@ Press a global hotkey from any app, dictate a thought, release. **voiceprompt**:
 1. records the audio,
 2. transcribes it locally with **NVIDIA Parakeet** (no audio leaves your machine),
 3. rewrites the transcript into a clean prompt with **Claude**, **Ollama Cloud**, or **Google Gemini**,
-4. pastes the result back into whatever app had focus — including the active **Claude Code** session in your terminal.
+4. pastes the result back into whatever app had focus — including the active terminal session of any supported agent CLI (**Claude Code**, **Gemini CLI**, **OpenCode**, **Codex**).
 
 It is built for people who already have a coding agent open all day and want to talk to it instead of typing.
 
@@ -57,7 +57,7 @@ It is built for people who already have a coding agent open all day and want to 
 - **Three AI providers, swap any time** — Anthropic Claude (paid, best quality), Ollama Cloud (free tier with `gpt-oss` / `qwen3-coder`), Google Gemini (generous free tier on `gemini-2.5-flash`).
 - **Local speech-to-text** — Parakeet-TDT-0.6B-v3 runs on your Mac via MLX. Your voice never hits the cloud.
 - **One global hotkey** — `voiceprompt listen` runs in the background. Toggle recording from any app with `ctrl+space` (configurable).
-- **Smart paste target** — auto-detects the open Claude Code session by PID + TTY and lands the prompt in its pane, even when another window has focus.
+- **Smart paste target** — auto-detects the open agent CLI session (Claude Code, Gemini CLI, OpenCode, Codex) by PID + TTY and lands the prompt in its pane, even when another window has focus.
 - **Polished TUI** — a sectioned menu, aligned status panel, guided first-run setup, hierarchical settings.
 - **Secure by default** — API keys saved with `0600` perms; error messages redact secrets; the process renames itself from "Python" to "voiceprompt" in macOS perm prompts and Activity Monitor.
 
@@ -132,7 +132,7 @@ Flags:
 voiceprompt listen --hotkey ctrl+shift+space
 voiceprompt listen --target "Cursor"        # force a specific paste target
 voiceprompt listen --no-paste               # clipboard only, no auto-paste
-voiceprompt listen --no-claude              # disable Claude Code auto-detection
+voiceprompt listen --no-agent               # disable agent CLI auto-detection (claude/gemini/opencode/codex)
 ```
 
 ### Interactive menu
@@ -190,7 +190,7 @@ Grant these the first time the OS prompts (System Settings → Privacy & Securit
 | **Microphone**       | Records audio from the default input device.               |
 | **Input Monitoring** | Listens for the global hotkey while in the background.     |
 | **Accessibility**    | Simulates `Cmd+V` to paste the refined prompt.             |
-| **Automation**       | Reads the active app and focuses Claude Code's terminal pane. |
+| **Automation**       | Reads the active app and focuses the agent CLI's terminal pane. |
 
 The permission prompts identify the app as **voiceprompt** (not "Python") thanks to a `setproctitle` + `NSBundle.CFBundleName` patch applied at startup.
 
@@ -237,7 +237,7 @@ Editable from **Settings** in the menu, or directly with your editor.
 1. **Recording** — `sounddevice` captures mono PCM at 16 kHz from the default mic. A live waveform renders in the terminal while you talk.
 2. **Transcription** — `parakeet-mlx` runs Parakeet-TDT on the Apple Silicon GPU. The audio file is deleted right after.
 3. **Refinement** — only the *text* transcript is sent to the active provider, paired with your system prompt, asking for a single clean prompt in the original language.
-4. **Delivery** — the result is copied to the clipboard. If a paste target was found (Claude Code session via PID + TTY, or the frontmost app), `Cmd+V` / `Ctrl+V` is simulated there. Otherwise, paste it yourself.
+4. **Delivery** — the result is copied to the clipboard. If a paste target was found (an agent CLI session via PID + TTY — Claude Code / Gemini / OpenCode / Codex — or the frontmost app), `Cmd+V` / `Ctrl+V` is simulated there. Otherwise, paste it yourself.
 
 ---
 

@@ -155,16 +155,23 @@ def listen_cmd(
         None,
         "--target",
         "-t",
-        help="Force target app (skips Claude Code auto-detection).",
+        help="Force target app (skips agent CLI auto-detection).",
     ),
     no_paste: bool = typer.Option(False, "--no-paste", help="Only copy to the clipboard."),
-    no_claude: bool = typer.Option(False, "--no-claude", help="Do not auto-detect Claude Code."),
+    no_agent: bool = typer.Option(
+        False,
+        "--no-agent",
+        help="Disable auto-detection of agent CLIs (claude / gemini / opencode / codex).",
+    ),
 ) -> None:
     """Daemon: listen for a global hotkey and record when pressed (toggle).
 
-    Press the hotkey once to start recording, then press it again (or Enter in the
-    voiceprompt window) to stop. Works from any app without
-    switching windows.
+    Auto-detects any open agent CLI (Claude Code, Gemini CLI, OpenCode, Codex)
+    and pastes the refined prompt into its terminal pane. Falls back to the
+    frontmost app when no agent is running.
+
+    Press the hotkey once to start recording, then press it again (or Enter in
+    the voiceprompt window) to stop.
 
     First-run macOS permissions:
       System Settings -> Privacy & Security -> Input Monitoring  (listen for the hotkey)
@@ -182,7 +189,7 @@ def listen_cmd(
         hotkey_override=hotkey,
         target=target,
         no_paste=no_paste,
-        no_claude=no_claude,
+        no_agent=no_agent,
     )
 
 

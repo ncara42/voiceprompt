@@ -182,18 +182,40 @@ def paste_to(app_name: str | None, *, activate_delay: float = 0.18) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Claude Code auto-detection: find the terminal session running `claude` and
-# focus exactly that pane/tab so the paste lands inside Claude Code's prompt.
+# Agent CLI auto-detection: find the terminal session running a supported
+# coding-agent CLI and focus exactly that pane/tab so the paste lands inside
+# its prompt. Supports Claude Code, Gemini CLI, OpenCode, and Codex.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _find_claude_pid() -> int | None:
-    """Return the PID of a running Claude Code CLI process, or None."""
+# Order matters only as a tiebreaker — across all running agents, the one with
+# the highest PID (most recently started) wins.
+_AGENT_BINARIES: tuple[str, ...] = ("claude", "gemini", "opencode", "codex")
+
+_AGENT_LABELS: dict[str, str] = {
+    "claude": "Claude Code",
+    "gemini": "Gemini CLI",
+    "opencode": "OpenCode",
+    "codex": "Codex",
+}
+
+# Substrings we never treat as the target CLI: our own process, macOS desktop
+# bundles, and anything launched out of /Applications. Keeps us from latching
+# onto e.g. the Claude desktop app or a packaged Gemini Electron build.
+_AGENT_FILTER_PATTERNS: tuple[str, ...] = (
+    "voiceprompt",
+    ".app/contents",
+    "/applications/",
+)
+
+
+def _find_agent_pid(binary: str) -> int | None:
+    """Return the PID of a running CLI process whose argv0 basename matches ``binary``."""
     import os  # noqa: PLC0415
 
     try:
         r = subprocess.run(
-            ["pgrep", "-fl", "claude"],
+            ["pgrep", "-fl", binary],
             capture_output=True,
             text=True,
             timeout=2,
@@ -204,6 +226,7 @@ def _find_claude_pid() -> int | None:
         return None
 
     candidates: list[tuple[int, str]] = []
+    target = binary.lower()
     for line in r.stdout.splitlines():
         parts = line.split(None, 1)
         if len(parts) < 2:
@@ -212,21 +235,15 @@ def _find_claude_pid() -> int | None:
         if not pid_s.isdigit():
             continue
         cmd_lower = cmd.lower()
-        # Skip ourselves and the Claude desktop app -- we want the CLI.
-        if "voiceprompt" in cmd_lower:
+        if any(pat in cmd_lower for pat in _AGENT_FILTER_PATTERNS):
             continue
-        if "claude.app/contents" in cmd_lower:
-            continue
-        if cmd.startswith("/Applications/Claude.app/"):
-            continue
-        # Inspect the basename of argv[0] -- the CLI installs as a symlink named
-        # exactly `claude` (e.g. ~/.local/bin/claude -> versions/X). When invoked
-        # via PATH the cmdline is just "claude" with no slashes.
-        # Stay strict: only `claude` itself, never wrappers like bun/node/deno
-        # whose path happens to contain "/claude" (e.g. ~/.claude/plugins/...).
+        # Match exactly on argv0 basename. The CLI installs as a binary named
+        # like `claude` / `gemini` / `opencode` / `codex` and is invoked via
+        # PATH, so cmdline is usually just the binary name with no slashes.
+        # Stay strict: never match wrappers like bun/node/deno whose path
+        # happens to contain the binary name in a subdirectory.
         argv0 = cmd.split()[0] if cmd.split() else ""
-        base = os.path.basename(argv0).lower()
-        if base == "claude":
+        if os.path.basename(argv0).lower() == target:
             candidates.append((int(pid_s), cmd))
 
     if not candidates:
@@ -318,25 +335,34 @@ def _focus_session_for_tty(tty: str) -> bool:
     return False
 
 
-def find_claude_target() -> tuple[str, str] | None:
-    """Detect a running Claude Code session.
+def find_agent_target() -> tuple[str, str] | None:
+    """Detect any running supported AI agent CLI in a terminal session.
 
-    Returns (label, identifier) where identifier is a TTY (mac) we know how to
-    focus, or None if no Claude is running / the platform isn't supported.
+    Scans Claude Code, Gemini CLI, OpenCode, and Codex; returns ``(label, tty)``
+    for whichever one was started most recently, or ``None`` if none are running
+    or the platform isn't supported.
     """
     if PLATFORM != "Darwin":
         return None
-    pid = _find_claude_pid()
-    if pid is None:
+    candidates: list[tuple[int, str, str]] = []  # (pid, binary, tty)
+    for binary in _AGENT_BINARIES:
+        pid = _find_agent_pid(binary)
+        if pid is None:
+            continue
+        tty = _get_pid_tty(pid)
+        if tty is None:
+            continue
+        candidates.append((pid, binary, tty))
+    if not candidates:
         return None
-    tty = _get_pid_tty(pid)
-    if tty is None:
-        return None
-    return (f"Claude Code (pid {pid}, {tty})", tty)
+    # Most recent process wins.
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    pid, binary, tty = candidates[0]
+    return (f"{_AGENT_LABELS[binary]} (pid {pid}, {tty})", tty)
 
 
-def paste_to_claude(tty: str, *, activate_delay: float = 0.22) -> bool:
-    """Focus the terminal session attached to `tty` and paste."""
+def paste_to_terminal_session(tty: str, *, activate_delay: float = 0.22) -> bool:
+    """Focus the terminal session attached to ``tty`` and paste."""
     if not _focus_session_for_tty(tty):
         return False
     time.sleep(activate_delay)
