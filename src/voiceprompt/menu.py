@@ -460,10 +460,7 @@ def _show_permissions(config: Config) -> None:
         ("                                          listens for the global hotkey\n", "hint"),
         ("  System Settings → Privacy & Security → ", "value"),
         ("Accessibility\n", "accent"),
-        ("                                          simulates Cmd+V to paste\n", "hint"),
-        ("  System Settings → Privacy & Security → ", "value"),
-        ("Automation\n", "accent"),
-        ("                                          reads the active app name\n\n", "hint"),
+        ("                                          simulates Cmd+V into focus\n\n", "hint"),
         ("HOTKEY\n", "section"),
         ("  Default ", "value"),
         (config.hotkey, "kbd"),
@@ -535,11 +532,13 @@ def _action_listen(
     config: Config,
     *,
     hotkey_override: str | None = None,
-    target: str | None = None,
     no_paste: bool = False,
-    no_agent: bool = False,
 ) -> None:
-    """Run the global-hotkey daemon loop. Shared by the menu and ``voiceprompt listen``."""
+    """Run the global-hotkey daemon loop. Shared by the menu and ``voiceprompt listen``.
+
+    The daemon never steals focus, so the refined prompt is pasted into whichever
+    window the user was already using when they pressed the hotkey.
+    """
     from voiceprompt import hotkey as hk  # noqa: PLC0415
 
     if not hk.is_supported():
@@ -567,6 +566,7 @@ def _action_listen(
             (combo, "accent"),
             ("\n\n", ""),
             ("Press the hotkey from any app to start recording, then again to stop.\n", "value"),
+            ("The refined prompt is pasted into whichever window has focus.\n", "value"),
             ("Ctrl+C in this window quits the daemon.", "hint"),
         ),
         title="Listening",
@@ -577,52 +577,18 @@ def _action_listen(
             ctx.start_event.wait()
             ctx.start_event.clear()
 
-            target_app: str | None = None
-            target_tty: str | None = None
-            agent_label: str | None = None
-            if not no_paste:
-                if target:
-                    target_app = target
-                else:
-                    if not no_agent:
-                        agent = inject.find_agent_target()
-                        if agent is not None:
-                            agent_label, target_tty = agent
-                    if target_tty is None:
-                        target_app = inject.get_frontmost_app()
-
             console.clear()
             banner(_get_version())
-            target_text: Text
-            if target_tty:
-                # Strip the "(pid …, /dev/ttysN)" trailing detail from the label
-                # for the panel — keep just the agent name on the front line.
-                pretty_label = agent_label.split(" (")[0] if agent_label else "Agent CLI"
-                target_text = Text.assemble(
-                    ("target  ", "hint"),
-                    (f"{pretty_label} ", "accent"),
-                    (f"({target_tty})", "hint"),
-                )
-            elif target_app:
-                target_text = Text.assemble(("target  ", "hint"), (target_app, "accent"))
-            else:
-                target_text = Text("target  (none — clipboard only)", style="hint")
             console.print(
                 _panel(
-                    Text.assemble(
-                        ("hotkey  ", "hint"),
-                        (combo, "accent"),
-                        ("\n", ""),
-                        target_text,
-                    ),
+                    Text.assemble(("hotkey  ", "hint"), (combo, "accent")),
                     title="Recording",
                 )
             )
 
             _action_dictate(
                 config,
-                target_app=target_app,
-                target_tty=target_tty,
+                paste=not no_paste,
                 exit_after=True,
                 hotkey_ctx=ctx,
             )
@@ -646,12 +612,16 @@ def _action_listen(
 def _action_dictate(
     config: Config,
     *,
-    target_app: str | None = None,
-    target_tty: str | None = None,
+    paste: bool = False,
     exit_after: bool = False,
     hotkey_ctx=None,
 ) -> None:
-    """Run a dictation cycle: record → transcribe → refine → copy/paste."""
+    """Run a dictation cycle: record → transcribe → refine → copy → maybe paste.
+
+    ``paste=True`` simulates ⌘V / Ctrl+V into whichever window has focus when
+    the cycle finishes. The listen daemon enables it; the menu's "Dictate once"
+    leaves it off (clipboard only).
+    """
     console.print()
 
     # Make sure the transcription model is on disk before recording -- downloading
@@ -821,11 +791,10 @@ def _action_dictate(
     )
 
     copied = False
-    has_target = bool(target_tty or target_app)
     if config.auto_copy_clipboard:
         copied = clipboard_copy(final_prompt)
         if copied:
-            if not has_target:
+            if not paste:
                 console.print(
                     "\n  [ok]copied to clipboard[/ok]   "
                     "[hint]paste with [/hint][kbd]⌘V[/kbd][hint] / [/hint][kbd]Ctrl+V[/kbd]"
@@ -836,23 +805,13 @@ def _action_dictate(
                 "[hint]Install xclip / xsel on Linux, or select the text manually.[/hint]"
             )
 
-    if copied and has_target:
-        ok = (
-            inject.paste_to_terminal_session(target_tty)
-            if target_tty
-            else inject.paste_to(target_app)
-        )
+    if copied and paste:
+        ok = inject.paste()
         if not ok:
-            if target_tty:
-                console.print(
-                    "\n  [warn]Could not focus the agent's terminal session.[/warn] "
-                    "[hint]Paste manually with ⌘V wherever you want.[/hint]"
-                )
-            else:
-                console.print(
-                    "\n  [warn]Could not paste automatically.[/warn] "
-                    f"[hint]{inject.missing_tool_hint()}[/hint]"
-                )
+            console.print(
+                "\n  [warn]Could not paste automatically.[/warn] "
+                f"[hint]{inject.missing_tool_hint()}[/hint]"
+            )
 
     if not exit_after:
         _pause()

@@ -151,27 +151,14 @@ def listen_cmd(
         "-k",
         help="Global hotkey combination (default: config value, usually 'ctrl+space').",
     ),
-    target: str = typer.Option(
-        None,
-        "--target",
-        "-t",
-        help="Force target app (skips agent CLI auto-detection).",
-    ),
     no_paste: bool = typer.Option(False, "--no-paste", help="Only copy to the clipboard."),
-    no_agent: bool = typer.Option(
-        False,
-        "--no-agent",
-        help="Disable auto-detection of agent CLIs (claude / gemini / opencode / codex).",
-    ),
 ) -> None:
     """Daemon: listen for a global hotkey and record when pressed (toggle).
 
-    Auto-detects any open agent CLI (Claude Code, Gemini CLI, OpenCode, Codex)
-    and pastes the refined prompt into its terminal pane. Falls back to the
-    frontmost app when no agent is running.
-
-    Press the hotkey once to start recording, then press it again (or Enter in
-    the voiceprompt window) to stop.
+    The refined prompt is pasted into whichever window has focus when the cycle
+    finishes. The daemon never steals focus, so make sure your target window
+    (Claude Code, Gemini CLI, an editor, anything) is in front before pressing
+    the hotkey.
 
     First-run macOS permissions:
       System Settings -> Privacy & Security -> Input Monitoring  (listen for the hotkey)
@@ -187,9 +174,7 @@ def listen_cmd(
     _action_listen(
         config,
         hotkey_override=hotkey,
-        target=target,
         no_paste=no_paste,
-        no_agent=no_agent,
     )
 
 
