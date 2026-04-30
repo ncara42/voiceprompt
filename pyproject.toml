@@ -1,12 +1,17 @@
 [project]
 name = "voiceprompt-cli"
 version = "0.2.0"
-description = "Speak. Claude refines. Paste: record, refine, and copy prompts"
+description = "Speak. AI refines. Paste. Voice-to-prompt CLI: local Parakeet STT, Claude/Ollama/Gemini refinement, global hotkey paste."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "Noel Caravaca", email = "noel@noelcaravaca.com" }]
-keywords = ["voice", "claude", "anthropic", "whisper", "cli", "prompt", "claude-code", "dictation"]
+keywords = [
+    "voice", "dictation", "voice-prompt", "speech-to-text", "stt",
+    "claude", "anthropic", "ollama", "gemini",
+    "parakeet", "mlx", "apple-silicon",
+    "claude-code", "cli", "prompt-engineering",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

@@ -1,37 +1,82 @@
-# voiceprompt
+<h1 align="center">voiceprompt</h1>
 
-> Speak. **Claude** refines. Paste. Cross-platform CLI that records your dictation, transcribes it locally with **Whisper**, turns it into a clean prompt with **Anthropic Claude**, and pastes it into the **Claude Code** session you already have open — even when it is not the active window.
+<p align="center">
+  <em>Speak. AI refines. Paste.</em><br>
+  A polished CLI that turns your voice into a clean prompt and pastes it<br>
+  into whichever app you were just using.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue.svg">
+  <img alt="Platform: Apple Silicon" src="https://img.shields.io/badge/platform-Apple%20Silicon-black?logo=apple">
+  <img alt="Status: beta" src="https://img.shields.io/badge/status-beta-orange.svg">
+</p>
 
 ```
-╭───────────────────────────────╮
-│  voiceprompt   v0.2.0         │
-│ Speak. Claude refines. Paste. │
-╰───────────────────────────────╯
+╭─────────────────────────────╮
+│  voiceprompt   v0.2.0       │
+│  Speak. AI refines. Paste.  │
+╰─────────────────────────────╯
 
-╭─ status ────────────────╮
-│   status  ready         │
-│   claude  haiku 4.5     │
-│  whisper  small  cached │
-│ language  en            │
-╰─────────────────────────╯
+╭─ status ──────────────────────────────────────────╮
+│         state  ready                              │
+│      provider  Claude (Anthropic)  ·  haiku 4.5   │
+│ transcription  parakeet-tdt-0.6b-v3  ·  cached    │
+│        hotkey  ctrl+space                         │
+│      language  auto                               │
+╰───────────────────────────────────────────────────╯
+
+  › Listen for hotkey   toggle with ctrl+space
+    Dictate once        single recording, in this window
+
+  PREFERENCES
+    Settings
+    Help & about
+
+    Quit
 ```
-
-Works on **macOS**, **Linux**, and **Windows**.
 
 ---
 
-## How it works
+## What it does
 
-1. **Recording** — `sounddevice` captures mono audio at 16 kHz from the default microphone. While recording, you see a live animated waveform (`▁▂▃▄▅▆▇█`).
-2. **Local transcription** — `faster-whisper` (default model: `small`, one-time download ~480 MB) runs on CPU without uploading audio to the cloud.
-3. **Prompt refinement** — the text is sent to Claude (`claude-haiku-4-5` by default) with a system prompt that asks for a clean, direct prompt ready for a coding assistant.
-4. **Delivery** — the result is copied to the clipboard and automatically pasted into the detected Claude Code session (via PID + TTY + AppleScript on macOS).
+Press a global hotkey from any app, dictate a thought, release. **voiceprompt**:
+
+1. records the audio,
+2. transcribes it locally with **NVIDIA Parakeet** (no audio leaves your machine),
+3. rewrites the transcript into a clean prompt with **Claude**, **Ollama Cloud**, or **Google Gemini**,
+4. pastes the result back into whatever app had focus — including the active **Claude Code** session in your terminal.
+
+It is built for people who already have a coding agent open all day and want to talk to it instead of typing.
 
 ---
 
-## Installation
+## Highlights
 
-### Local from the repo (recommended during development)
+- **Three AI providers, swap any time** — Anthropic Claude (paid, best quality), Ollama Cloud (free tier with `gpt-oss` / `qwen3-coder`), Google Gemini (generous free tier on `gemini-2.5-flash`).
+- **Local speech-to-text** — Parakeet-TDT-0.6B-v3 runs on your Mac via MLX. Your voice never hits the cloud.
+- **One global hotkey** — `voiceprompt listen` runs in the background. Toggle recording from any app with `ctrl+space` (configurable).
+- **Smart paste target** — auto-detects the open Claude Code session by PID + TTY and lands the prompt in its pane, even when another window has focus.
+- **Polished TUI** — a sectioned menu, aligned status panel, guided first-run setup, hierarchical settings.
+- **Secure by default** — API keys saved with `0600` perms; error messages redact secrets; the process renames itself from "Python" to "voiceprompt" in macOS perm prompts and Activity Monitor.
+
+---
+
+## Requirements
+
+| Requirement     | Notes                                                                          |
+| --------------- | ------------------------------------------------------------------------------ |
+| **macOS**       | Apple Silicon (M-series). Parakeet runs on MLX.                                |
+| **Python**      | 3.10 or newer.                                                                 |
+| **AI provider** | One API key from Anthropic, Ollama Cloud, or Google AI Studio (free tiers OK). |
+| **Disk**        | ~1.2 GB for the default Parakeet model (one-time download).                    |
+
+Linux/Windows: most of the pipeline still works (recording, providers, paste), but the transcription step requires Apple Silicon today. Ports welcome.
+
+---
+
+## Install
 
 ```bash
 git clone https://github.com/noelcaravaca/voiceprompt-cli
@@ -39,18 +84,13 @@ cd voiceprompt-cli
 ./install.sh
 ```
 
-The script detects `uv` > `pipx` > `pip --user` and installs `voiceprompt` into `~/.local/bin/` (usually already in your PATH).
+The installer auto-detects `uv` → `pipx` → `pip --user` and installs the `voiceprompt` binary to `~/.local/bin/`. Output is silent on success; failures replay the full log to stderr.
 
-### Manual
+Manual options:
 
 ```bash
-# uv (recommended)
-uv tool install .
-
-# pipx
+uv tool install .                     # recommended
 pipx install .
-
-# pip user-level
 pip install --user .
 ```
 
@@ -58,153 +98,209 @@ To uninstall: `./install.sh --uninstall`.
 
 ---
 
-## Setup
-
-1. Get an Anthropic API key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
-2. Configure the key:
-   ```bash
-   voiceprompt set-key            # prompts through hidden stdin (recommended)
-   voiceprompt set-key sk-ant-... # warning: stays in shell history
-   ```
-   Alternative: export `ANTHROPIC_API_KEY` in your shell rc file.
-3. Optional: change model, language, or system prompt in `voiceprompt` → **Advanced settings**.
-
-The config is stored here (with `0600` permissions; the key is never world-readable):
-
-| OS      | Path                                                    |
-| ------- | ------------------------------------------------------- |
-| macOS   | `~/Library/Application Support/voiceprompt/config.json` |
-| Linux   | `~/.config/voiceprompt/config.json`                     |
-| Windows | `%APPDATA%\voiceprompt\config.json`                    |
-
----
-
-## Usage
-
-### `voiceprompt listen` — global hotkey daemon *(recommended)*
-
-```bash
-voiceprompt listen
-# Press Ctrl+Space from any app to start/stop recording.
-```
-
-Infinite loop with a global hotkey (default `ctrl+space`, configurable with `--hotkey`). Toggle: first press starts recording; second press stops, processes, and pastes into Claude Code.
-
-### `voiceprompt` — interactive menu
+## Quick start
 
 ```bash
 voiceprompt
 ```
 
-Navigate with `↑↓` / `←→` / `Enter`. Useful for setup, connection tests, input-device listing, and advanced settings.
+The first run shows **Set up voiceprompt**, a guided three-step wizard:
+
+1. Pick a provider (Claude / Ollama Cloud / Gemini).
+2. Paste your API key — it's prompted via hidden stdin.
+3. Optionally ping the provider to verify the connection.
+
+Then pick **Listen for hotkey** and you're ready: press `ctrl+space` from any app to dictate.
+
+> **Get a key:** [Anthropic](https://console.anthropic.com/settings/keys) · [Ollama](https://ollama.com/settings/keys) · [Google AI Studio](https://aistudio.google.com/apikey)
+
+---
+
+## Usage
+
+### Daemon mode (recommended)
+
+```bash
+voiceprompt listen
+```
+
+Runs in the background listening for the global hotkey. First press starts recording; second press stops, transcribes, refines, and pastes. `Ctrl+C` in the daemon window quits.
+
+Flags:
+
+```bash
+voiceprompt listen --hotkey ctrl+shift+space
+voiceprompt listen --target "Cursor"        # force a specific paste target
+voiceprompt listen --no-paste               # clipboard only, no auto-paste
+voiceprompt listen --no-claude              # disable Claude Code auto-detection
+```
+
+### Interactive menu
+
+```bash
+voiceprompt
+```
+
+The menu also exposes the daemon, a one-shot dictation, settings, and help screens.
 
 ### Other commands
 
-```bash
-voiceprompt dictate     # one dictation in this terminal; does not paste elsewhere
-voiceprompt set-key     # save API key safely through hidden stdin
-voiceprompt config      # show current config without the key
-voiceprompt --version
-voiceprompt --help
+| Command                                       | What it does                                              |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `voiceprompt dictate`                         | One dictation in the current terminal; no auto-paste.     |
+| `voiceprompt set-key --provider claude <KEY>` | Save an API key without opening the menu.                 |
+| `voiceprompt config`                          | Show the active config (paths, models, key state).        |
+| `voiceprompt --version`                       | Print the version.                                        |
+| `voiceprompt --help`                          | All flags.                                                |
+
+---
+
+## Providers
+
+| Provider        | Default model            | Cost                            | Notes                                                          |
+| --------------- | ------------------------ | ------------------------------- | -------------------------------------------------------------- |
+| Anthropic Claude| `claude-haiku-4-5`       | paid                            | Best quality. `sonnet-4-6` and `opus-4-7` available.           |
+| Ollama Cloud    | `gpt-oss:120b`           | free tier · paid extras         | Open-weight models including `gpt-oss:20b`, `qwen3-coder:480b`.|
+| Google Gemini   | `gemini-2.5-flash`       | free tier · 15 RPM, 1500 RPD    | Closest free analog to Haiku. `gemini-2.5-pro` for better quality.|
+
+Switch providers from **Settings → AI provider**. Switching is instant — pick a model and a key per provider, voiceprompt remembers each.
+
+---
+
+## Transcription models
+
+Parakeet variants exposed in **Settings → Transcription model**:
+
+| Model                                  | Languages          | Size     | Notes                              |
+| -------------------------------------- | ------------------ | -------- | ---------------------------------- |
+| `mlx-community/parakeet-tdt-0.6b-v3`   | 25 European langs  | ~1.2 GB  | Default. Auto-detects language.    |
+| `mlx-community/parakeet-tdt-0.6b-v2`   | English            | ~1.2 GB  | Slightly faster on English-only.   |
+| `mlx-community/parakeet-rnnt-1.1b`     | English            | ~2.3 GB  | Larger, marginally more accurate.  |
+
+Models are downloaded on first use and cached at `~/.cache/huggingface/`. `hf-transfer` is enabled by default for parallel downloads — set `HF_HUB_ENABLE_HF_TRANSFER=0` to opt out.
+
+---
+
+## macOS permissions
+
+Grant these the first time the OS prompts (System Settings → Privacy & Security):
+
+| Permission           | Why voiceprompt needs it                                   |
+| -------------------- | ---------------------------------------------------------- |
+| **Microphone**       | Records audio from the default input device.               |
+| **Input Monitoring** | Listens for the global hotkey while in the background.     |
+| **Accessibility**    | Simulates `Cmd+V` to paste the refined prompt.             |
+| **Automation**       | Reads the active app and focuses Claude Code's terminal pane. |
+
+The permission prompts identify the app as **voiceprompt** (not "Python") thanks to a `setproctitle` + `NSBundle.CFBundleName` patch applied at startup.
+
+---
+
+## Auto-start at login
+
+| OS      | How                                                                                       |
+| ------- | ----------------------------------------------------------------------------------------- |
+| macOS   | Add `voiceprompt listen` to **Login Items**, or wrap it in a `launchd` plist.             |
+| Linux   | A `systemd --user` service running `voiceprompt listen`.                                  |
+| Windows | Task Scheduler at logon → `voiceprompt listen`.                                           |
+
+Combine with a custom hotkey (Raycast / Alfred / Hammerspoon / Apple Shortcuts) if you'd rather not have a daemon resident.
+
+---
+
+## Configuration file
+
+JSON, written atomically with `0600` permissions:
+
+| OS      | Path                                                    |
+| ------- | ------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/voiceprompt/config.json` |
+| Linux   | `~/.config/voiceprompt/config.json`                     |
+| Windows | `%APPDATA%\voiceprompt\config.json`                     |
+
+Editable from **Settings** in the menu, or directly with your editor.
+
+---
+
+## How it works
+
+```
+   ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌────────────┐
+   │  microphone  │ → │  Parakeet (MLX)  │ → │  Claude / Ollama │ → │   paste    │
+   │  16 kHz mono │   │  local, on-device│   │   Cloud / Gemini │   │  ⌘V / ^V   │
+   └──────────────┘   └──────────────────┘   └──────────────────┘   └────────────┘
+                                                       ↑
+                                              system prompt
+                                              (configurable)
 ```
 
----
-
-## Models
-
-### Claude (prompt refinement)
-
-| Model                           | Cost / latency        | When to use              |
-| ------------------------------- | --------------------- | ------------------------ |
-| `claude-haiku-4-5-20251001`     | cheap, fast           | default, recommended     |
-| `claude-sonnet-4-6`             | medium                | better quality           |
-| `claude-opus-4-7`               | expensive             | maximum quality          |
-
-### Whisper (transcription)
-
-Approximate model size (one-time download, stored in `~/.cache/huggingface/`):
-
-| Model      | Size     | CPU speed       |
-| ---------- | -------- | --------------- |
-| `tiny`     | ~75 MB   | fastest         |
-| `base`     | ~145 MB  | fast            |
-| `small`    | ~480 MB  | balanced        |
-| `medium`   | ~1.5 GB  | better quality  |
-| `large-v3` | ~3 GB    | maximum quality |
-
-`hf-transfer` is enabled by default for parallel downloads. Set `HF_TOKEN` (Read token from huggingface.co/settings/tokens) for higher rate limits.
+1. **Recording** — `sounddevice` captures mono PCM at 16 kHz from the default mic. A live waveform renders in the terminal while you talk.
+2. **Transcription** — `parakeet-mlx` runs Parakeet-TDT on the Apple Silicon GPU. The audio file is deleted right after.
+3. **Refinement** — only the *text* transcript is sent to the active provider, paired with your system prompt, asking for a single clean prompt in the original language.
+4. **Delivery** — the result is copied to the clipboard. If a paste target was found (Claude Code session via PID + TTY, or the frontmost app), `Cmd+V` / `Ctrl+V` is simulated there. Otherwise, paste it yourself.
 
 ---
 
-## Permissions
+## Privacy & security
 
-### macOS (first run)
+- **Audio never leaves your machine.** Transcription is 100% local; the WAV file is unlinked immediately after.
+- **Only the transcript is sent to the AI provider.**
+- **API keys** are stored locally with `0600` permissions, written atomically. They never appear in logs or error messages — there are explicit redaction patterns for `sk-ant-*`, `Bearer …`, and `AIza*` tokens.
+- **No telemetry.** No analytics, no remote calls beyond the chosen AI provider.
+- **No-paste mode** (`--no-paste`) skips automation entirely if you'd rather paste manually.
 
-The system will request permission for each feature. Grant them under **System Settings → Privacy & Security**:
-
-| Permission           | Used for                                             |
-| -------------------- | ---------------------------------------------------- |
-| **Microphone**       | recording audio                                      |
-| **Accessibility**    | simulating `Cmd+V` (auto-paste)                      |
-| **Automation**       | reading the active app and focusing Claude Code tabs |
-| **Input Monitoring** | listening for the global hotkey (`voiceprompt listen` only) |
-
-Enable the terminal where you run `voiceprompt` (Terminal / iTerm / Ghostty / Warp) in each relevant panel.
-
-### Linux
-
-- **Audio**: `libportaudio2` for capture (Debian/Ubuntu: `apt install libportaudio2 portaudio19-dev`).
-- **Auto-paste**: `xdotool` (X11) or `wtype` (Wayland).
-- **Window activation**: optional `wmctrl` (X11).
-
-### Windows
-
-No special permissions required. Detecting/focusing specific tabs inside Windows Terminal is not implemented yet; it falls back to pasting into the active app.
+Found a security issue? See [`SECURITY.md`](SECURITY.md).
 
 ---
 
 ## Environment variables
 
-| Variable                       | Effect                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`            | Overrides the key from config — useful for CI or temporary shells         |
-| `HF_TOKEN`                     | Hugging Face token for higher download rate limits                        |
-| `HF_HUB_ENABLE_HF_TRANSFER=0`  | Disables the Rust parallel downloader (enabled by default)                |
-
----
-
-## Security
-
-- The API key is stored **locally** with `0600` permissions (atomic write, never world-readable).
-- Error messages are redacted so they never include the key.
-- Audio is NOT uploaded to any cloud — transcription is 100% local with Whisper.
-- Claude only receives the **transcribed text**, never the audio.
-- Security reports: see [`SECURITY.md`](SECURITY.md).
+| Variable                       | Effect                                                                |
+| ------------------------------ | --------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`            | Pre-fills the Claude key on first config load.                        |
+| `OLLAMA_API_KEY`               | Pre-fills the Ollama Cloud key on first config load.                  |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Pre-fills the Gemini key on first config load.                   |
+| `HF_TOKEN`                     | Hugging Face token for higher download rate limits.                   |
+| `HF_HUB_ENABLE_HF_TRANSFER=0`  | Disables the Rust parallel downloader (enabled by default).           |
 
 ---
 
 ## Development
 
 ```bash
+git clone https://github.com/noelcaravaca/voiceprompt-cli
+cd voiceprompt-cli
 uv sync --group dev
-uv run voiceprompt
-uv run ruff check src/
+
+uv run voiceprompt              # run from source without installing
+uv run python -m unittest       # run the test suite
+uv run ruff check src/ tests/   # lint
 ```
 
-After any code change, reinstall the global binary:
+After editing source, reinstall the global binary so the `voiceprompt` command picks up your changes:
 
 ```bash
-./install.sh   # clears uv cache and reinstalls
+./install.sh --uv
 ```
 
-(Without this, `uv tool install --force` can reuse a cached wheel and miss your changes.)
+(Without this, `uv tool install --force` may reuse a cached wheel and miss your edits.)
+
+---
+
+## Roadmap
+
+- [ ] Linux/Windows transcription (e.g. ONNX Parakeet via `parakeet-rs`).
+- [ ] Streaming transcription with progressive refinement.
+- [ ] Custom system-prompt presets (one for chat, one for code, one for commit messages).
+- [ ] Local Ollama (no cloud) as a fourth provider option.
+- [ ] Native macOS menu bar app for users who don't want a terminal daemon.
+
+PRs welcome.
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+[MIT](LICENSE) © Noel Caravaca.
 
-## Credits
-
-The original Swift/macOS MVP is preserved in [`legacy/swift-macos/`](legacy/swift-macos/) for historical reference. The current version is a pure Python CLI.
+The original Swift/macOS prototype is preserved in [`legacy/swift-macos/`](legacy/swift-macos/) for historical reference. The current codebase is pure Python.
