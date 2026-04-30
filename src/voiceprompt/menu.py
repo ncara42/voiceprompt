@@ -12,6 +12,7 @@ import contextlib
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import questionary
@@ -24,6 +25,7 @@ from voiceprompt import (
     claude,
     gemini,
     github_models,
+    history,
     inject,
     ollama,
     recorder,
@@ -69,11 +71,16 @@ def run_menu(config: Config) -> None:
                 sel.Choice("Quit", "quit"),
             ]
         else:
+            history_count = history.count() if config.history_enabled else 0
+            history_hint = (
+                f"{history_count} entries" if history_count else "empty"
+            )
             choices = [
                 sel.Choice(
                     "Listen for hotkey", "listen", hint=f"toggle with {config.hotkey}"
                 ),
                 sel.Choice("Dictate once", "dictate", hint="single recording, in this window"),
+                sel.Choice("History", "history", hint=history_hint),
                 sel.Separator("preferences"),
                 sel.Choice("Settings", "settings"),
                 sel.Choice("Help & about", "help"),
@@ -99,6 +106,8 @@ def run_menu(config: Config) -> None:
             _action_listen(config)
         elif choice == "dictate":
             _action_dictate(config)
+        elif choice == "history":
+            _action_history(config)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -450,6 +459,12 @@ def _settings_behavior(config: Config) -> None:
             ),
             sel.Choice("Temperature", "temp", hint=f"{temp_label}  ({config.temperature:.2f})"),
             sel.Choice("System prompt", "prompt", hint="edit"),
+            sel.Choice(
+                "History log",
+                "history",
+                hint=("on" if config.history_enabled else "off")
+                + f"  ·  {history.count()} entries",
+            ),
             sel.Separator(),
             sel.Choice("Back", "back"),
         ]
@@ -469,6 +484,10 @@ def _settings_behavior(config: Config) -> None:
             _settings_pick_temperature(config)
         elif choice == "prompt":
             _settings_edit_system_prompt(config)
+        elif choice == "history":
+            config.history_enabled = not config.history_enabled
+            cfg_mod.save(config)
+            _saved_flash()
 
 
 def _temperature_label(temp: float) -> str:
@@ -764,6 +783,166 @@ def _show_permissions(config: Config) -> None:
     )
     console.print(_panel(body, title="Keyboard & permissions"))
     _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# History
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_history(config: Config) -> None:
+    """Browse, replay, and clear past dictations."""
+    while True:
+        entries = history.read(limit=20)
+        _render_home(config, subtitle="History", compact=True)
+
+        if not entries:
+            console.print(
+                "  [hint]no dictations yet — press any key to go back.[/hint]"
+            )
+            _pause()
+            return
+
+        choices: list = []
+        for i, entry in enumerate(entries):
+            preview = entry.prompt.splitlines()[0] if entry.prompt else ""
+            if not preview:
+                preview = "(empty)"
+            elif len(preview) > 60:
+                preview = preview[:57] + "…"
+            ts = _format_relative_ts(entry.ts)
+            choices.append(
+                sel.Choice(preview, i, hint=f"{ts}  ·  {entry.provider}")
+            )
+
+        choices += [
+            sel.Separator(),
+            sel.Choice(
+                "Clear all history", "clear", hint=f"{history.count()} total"
+            ),
+            sel.Choice("Back", "back"),
+        ]
+
+        try:
+            choice = sel.select(
+                "Recent dictations",
+                choices,
+                back_value="back",
+                show_footer=True,
+            )
+        except KeyboardInterrupt:
+            return
+
+        if choice in (None, "back"):
+            return
+        if choice == "clear":
+            confirm = sel.select(
+                "Clear all history? This cannot be undone.",
+                [
+                    sel.Choice("Yes, delete every entry", True),
+                    sel.Choice("Cancel", False),
+                ],
+                default=False,
+                back_value=False,
+                show_footer=False,
+            )
+            if confirm:
+                history.clear()
+                console.print("\n  [ok]history cleared.[/ok]")
+                _pause()
+            continue
+
+        # Drill into a single entry.
+        _action_history_entry(config, entries[choice])
+
+
+def _action_history_entry(config: Config, entry: history.Entry) -> None:
+    """Show a single history entry and offer copy / paste actions."""
+    while True:
+        _render_home(config, subtitle="History › entry", compact=True)
+        meta = (
+            f"  [hint]{_format_relative_ts(entry.ts)}  ·  {entry.provider} · "
+            f"{entry.model}  ·  {entry.language}[/hint]"
+        )
+        console.print(meta)
+        console.print()
+        console.print(
+            Panel(
+                Text(entry.transcript or "(empty)", style="value"),
+                border_style="subtle",
+                title="[accent2]transcript[/accent2]",
+                title_align="left",
+                padding=(0, 2),
+            )
+        )
+        console.print(
+            Panel(
+                Text(entry.prompt or "(empty)", style="value"),
+                border_style="ok",
+                title="[ok]refined prompt[/ok]",
+                title_align="left",
+                padding=(1, 2),
+            )
+        )
+
+        choices = [
+            sel.Choice("Copy prompt to clipboard", "copy"),
+            sel.Choice("Paste into focused window", "paste"),
+            sel.Separator(),
+            sel.Choice("Back", "back"),
+        ]
+        try:
+            choice = sel.select("", choices, back_value="back", show_footer=False)
+        except KeyboardInterrupt:
+            return
+        if choice in (None, "back"):
+            return
+        if choice == "copy":
+            if clipboard_copy(entry.prompt):
+                console.print("\n  [ok]copied to clipboard[/ok]")
+            else:
+                console.print(
+                    "\n  [warn]Could not copy.[/warn] "
+                    "[hint]Install xclip / xsel on Linux.[/hint]"
+                )
+            _pause()
+            continue
+        if choice == "paste":
+            if not clipboard_copy(entry.prompt):
+                console.print("\n  [warn]Could not copy to clipboard.[/warn]")
+                _pause()
+                continue
+            if inject.paste():
+                console.print("\n  [ok]pasted.[/ok]")
+                _pause()
+                return
+            console.print(
+                "\n  [warn]Could not paste automatically.[/warn] "
+                f"[hint]{inject.missing_tool_hint()}[/hint]"
+            )
+            _pause()
+
+
+def _format_relative_ts(ts: str) -> str:
+    """Format an ISO 8601 UTC timestamp as a friendly relative time."""
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return ts or "?"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    delta = (datetime.now(timezone.utc) - dt).total_seconds()
+    if delta < 30:
+        return "just now"
+    if delta < 60:
+        return f"{int(delta)}s ago"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86_400:
+        return f"{int(delta // 3600)}h ago"
+    if delta < 7 * 86_400:
+        return f"{int(delta // 86_400)}d ago"
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1175,6 +1354,20 @@ def _action_dictate(
         total_secs=time.monotonic() - started,
         paste=paste,
     )
+
+    # 5. History ──────────────────────────────────────────────────────────────
+    # Best-effort logging — failures here must never break the dictation flow.
+    if config.history_enabled:
+        history.log(
+            transcript=transcript,
+            prompt=refinement.prompt,
+            provider=reformulator.active_provider(config),
+            model=reformulator.active_model(config),
+            language=config.language,
+            record_secs=recording.elapsed,
+            refine_secs=refinement.elapsed,
+            max_entries=config.history_max_entries,
+        )
 
     if not exit_after:
         _pause()

@@ -53,6 +53,8 @@ class Config:
     sample_rate: int = 16000
     auto_copy_clipboard: bool = True
     hotkey: str = "ctrl+space"
+    history_enabled: bool = True
+    history_max_entries: int = 1000
 
     @property
     def is_configured(self) -> bool:

@@ -143,6 +143,11 @@ def show_config() -> None:
     console.print(f"[label]Ollama key:[/label] [value]{ollama_state}[/value]")
     console.print(f"[label]Gemini key:[/label] [value]{gemini_state}[/value]")
     console.print(f"[label]GitHub token:[/label] [value]{github_state}[/value]")
+    history_state = "on" if config.history_enabled else "off"
+    console.print(
+        f"[label]History:[/label] [value]{history_state}[/value]  "
+        f"[hint](max {config.history_max_entries} entries)[/hint]"
+    )
 
 
 @app.command("dictate")
@@ -155,6 +160,116 @@ def dictate_oneshot() -> None:
         console.print("[err]Missing API key.[/err] Run [value]voiceprompt set-key <KEY>[/value]")
         raise typer.Exit(code=1)
     _action_dictate(config)
+
+
+@app.command("history")
+def history_cmd(
+    limit: int = typer.Option(
+        10, "--limit", "-n", help="Number of recent entries to show.",
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", help="Print entries as a JSON array (newest first).",
+    ),
+    full: bool = typer.Option(
+        False, "--full", help="Show full prompts instead of one-line previews.",
+    ),
+    clear: bool = typer.Option(
+        False, "--clear", help="Delete the entire history file (no confirmation).",
+    ),
+) -> None:
+    """List recent dictations stored in the local history log.
+
+    History is appended to history.jsonl in the config directory. Nothing
+    is uploaded; the log is purely a local convenience for replay and audit.
+    """
+    from dataclasses import asdict  # noqa: PLC0415
+
+    from voiceprompt import history as hist  # noqa: PLC0415
+
+    if clear:
+        hist.clear()
+        console.print("[ok]history cleared.[/ok]")
+        return
+
+    entries = hist.read(limit=limit if limit > 0 else None)
+    if json_out:
+        import json as _json  # noqa: PLC0415
+
+        payload = [asdict(e) for e in entries]
+        console.print(_json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if not entries:
+        console.print(
+            f"  [hint]no history yet.[/hint] [hint]Path: {hist.history_path()}[/hint]"
+        )
+        return
+
+    from voiceprompt.menu import _format_relative_ts  # noqa: PLC0415
+
+    for i, entry in enumerate(entries, start=1):
+        ts = _format_relative_ts(entry.ts)
+        meta = (
+            f"[hint]{i:>3}  {ts:>10}  ·  {entry.provider} · "
+            f"{entry.model}[/hint]"
+        )
+        console.print(meta)
+        body = entry.prompt if full else entry.prompt.splitlines()[0] if entry.prompt else ""
+        if not full and len(body) > 100:
+            body = body[:97] + "…"
+        console.print(f"     [value]{body}[/value]")
+        console.print()
+
+
+@app.command("replay")
+def replay_cmd(
+    index: int = typer.Option(
+        1, "--index", "-n",
+        help="Re-paste the Nth most recent entry. 1 = latest, 2 = second latest, …",
+    ),
+    no_paste: bool = typer.Option(
+        False, "--no-paste", help="Only copy to clipboard, do not simulate the paste shortcut.",
+    ),
+) -> None:
+    """Re-paste a recent prompt from history without re-recording.
+
+    Handy when the previous paste landed in the wrong window or you want to
+    insert the same prompt into a different app.
+    """
+    from voiceprompt import history as hist  # noqa: PLC0415
+    from voiceprompt import inject as inj  # noqa: PLC0415
+    from voiceprompt.clipboard import copy as clipboard_copy  # noqa: PLC0415
+
+    if index < 1:
+        console.print("[err]--index must be >= 1.[/err]")
+        raise typer.Exit(code=1)
+
+    entries = hist.read(limit=index)
+    if not entries:
+        console.print("  [hint]no history yet.[/hint]")
+        raise typer.Exit(code=1)
+    if index > len(entries):
+        console.print(
+            f"  [warn]only {len(entries)} entries in history.[/warn]"
+        )
+        raise typer.Exit(code=1)
+    entry = entries[index - 1]
+
+    if not clipboard_copy(entry.prompt):
+        console.print("[warn]Could not copy to clipboard.[/warn]")
+        raise typer.Exit(code=1)
+
+    if no_paste:
+        console.print("  [ok]copied to clipboard[/ok]")
+        return
+
+    if not inj.paste():
+        console.print(
+            f"  [warn]Could not paste automatically.[/warn] "
+            f"[hint]{inj.missing_tool_hint()}[/hint]"
+        )
+        raise typer.Exit(code=1)
+    console.print("  [ok]pasted.[/ok]")
 
 
 @app.command("listen")
