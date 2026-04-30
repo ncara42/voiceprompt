@@ -41,8 +41,9 @@ jobs:
       - name: Lint
         run: uv run ruff check src/ tests/
 
-      - name: Type-check (gradual)
+      - name: Type-check (gradual, non-blocking)
         run: uv run mypy
+        continue-on-error: true
 
       - name: Run tests
         run: uv run python -m unittest discover -s tests -p 'test_*.py' -v

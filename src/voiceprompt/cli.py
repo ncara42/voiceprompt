@@ -64,12 +64,12 @@ def set_key(
     ),
 ) -> None:
     """Save the API key for a provider without opening the interactive menu."""
-    from voiceprompt import claude as claude_mod  # noqa: PLC0415
-    from voiceprompt import gemini as gemini_mod  # noqa: PLC0415
-    from voiceprompt import github_models as github_models_mod  # noqa: PLC0415
-    from voiceprompt import ollama as ollama_mod  # noqa: PLC0415
     from voiceprompt import reformulator as ref  # noqa: PLC0415
-    from voiceprompt import select as sel  # noqa: PLC0415
+    from voiceprompt.providers import claude as claude_mod  # noqa: PLC0415
+    from voiceprompt.providers import gemini as gemini_mod  # noqa: PLC0415
+    from voiceprompt.providers import github_models as github_models_mod  # noqa: PLC0415
+    from voiceprompt.providers import ollama as ollama_mod  # noqa: PLC0415
+    from voiceprompt.ui import select as sel  # noqa: PLC0415
 
     config = cfg_mod.load()
     target = ref.normalize(provider) if provider else ref.active_provider(config)
@@ -414,7 +414,7 @@ def replay_cmd(
     insert the same prompt into a different app.
     """
     from voiceprompt import history as hist  # noqa: PLC0415
-    from voiceprompt import inject as inj  # noqa: PLC0415
+    from voiceprompt.system import inject as inj  # noqa: PLC0415
     from voiceprompt.system.clipboard import copy as clipboard_copy  # noqa: PLC0415
 
     if index < 1:

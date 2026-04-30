@@ -540,7 +540,7 @@ def _settings_pick_temperature(config: Config) -> None:
 
 def _settings_capture_hotkey(config: Config) -> None:
     """Capture a new hotkey via pynput. Falls back to text input if unavailable."""
-    from voiceprompt import hotkey as hk  # noqa: PLC0415
+    from voiceprompt.system import hotkey as hk  # noqa: PLC0415
 
     _render_home(config, subtitle="Settings › Behavior › Hotkey", compact=True)
     console.print(
@@ -998,7 +998,7 @@ def _action_listen(
     The daemon never steals focus, so the refined prompt is pasted into whichever
     window the user was already using when they pressed the hotkey.
     """
-    from voiceprompt import hotkey as hk  # noqa: PLC0415
+    from voiceprompt.system import hotkey as hk  # noqa: PLC0415
 
     if not hk.is_supported():
         console.print(
