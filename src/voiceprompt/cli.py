@@ -449,6 +449,244 @@ def replay_cmd(
     console.print("  [ok]pasted.[/ok]")
 
 
+@app.command("start")
+def start_cmd(
+    hotkey: str = typer.Option(
+        None,
+        "--hotkey",
+        "-k",
+        help="Override the global hotkey for this run (e.g. 'ctrl+alt+space').",
+    ),
+    no_paste: bool = typer.Option(
+        False, "--no-paste", help="Only copy to clipboard; do not auto-paste.",
+    ),
+) -> None:
+    """Start the listen daemon in the background and return to the shell.
+
+    The daemon detaches from this terminal, survives shell exit, and writes
+    its output to a rotating log file. Press the hotkey from any window to
+    dictate, then run `voiceprompt stop` when done.
+    """
+    import contextlib  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    config = cfg_mod.load()
+    if not config.is_configured:
+        console.print("[err]Missing API key.[/err] Run [value]voiceprompt set-key <KEY>[/value]")
+        raise typer.Exit(code=1)
+
+    pid_path = _daemon_pid_path()
+    log_path = _daemon_log_path()
+
+    existing = _read_daemon_pid(pid_path)
+    if existing is not None and _process_alive(existing):
+        console.print(
+            f"  [warn]daemon already running[/warn] [hint](pid {existing})[/hint]\n"
+            f"  Stop it first with [value]voiceprompt stop[/value]."
+        )
+        raise typer.Exit(code=1)
+    if existing is not None:
+        # Stale pid file from a crashed run.
+        with contextlib.suppress(OSError):
+            pid_path.unlink()
+
+    cmd = [sys.executable, "-m", "voiceprompt", "listen"]
+    if hotkey:
+        cmd.extend(["--hotkey", hotkey])
+    if no_paste:
+        cmd.append("--no-paste")
+
+    try:
+        log_handle = log_path.open("ab", buffering=0)
+    except OSError as e:
+        console.print(f"[err]Could not open daemon log {log_path}: {e}[/err]")
+        raise typer.Exit(code=1) from None
+
+    try:
+        if sys.platform == "win32":
+            creation_flags = (
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_handle,
+                stderr=log_handle,
+                stdin=subprocess.DEVNULL,
+                creationflags=creation_flags,
+                close_fds=True,
+            )
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_handle,
+                stderr=log_handle,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+    finally:
+        # The child has its own dup of the fd; we can drop our reference.
+        with contextlib.suppress(OSError):
+            log_handle.close()
+
+    # Brief sanity check — let the child fail fast on startup errors.
+    time.sleep(0.6)
+    if not _process_alive(proc.pid):
+        console.print(
+            f"[err]daemon failed to start.[/err]  See log: [hint]{log_path}[/hint]"
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        pid_path.write_text(str(proc.pid))
+    except OSError as e:
+        # Daemon is running but we couldn't track it — kill it to avoid orphans.
+        with contextlib.suppress(OSError):
+            os.kill(proc.pid, 15)
+        console.print(f"[err]Could not write pid file {pid_path}: {e}[/err]")
+        raise typer.Exit(code=1) from None
+
+    combo = hotkey or config.hotkey
+    console.print(
+        f"  [ok]daemon started[/ok] [hint](pid {proc.pid})[/hint]\n"
+        f"  Hotkey:  [accent2]{combo}[/accent2]\n"
+        f"  Log:     [hint]{log_path}[/hint]\n"
+        f"  Stop:    [value]voiceprompt stop[/value]"
+    )
+
+
+@app.command("stop")
+def stop_cmd() -> None:
+    """Stop the background daemon started with `voiceprompt start`."""
+    import contextlib  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import signal  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    pid_path = _daemon_pid_path()
+    pid = _read_daemon_pid(pid_path)
+    if pid is None:
+        console.print("  [hint]daemon is not running.[/hint]")
+        return
+    if not _process_alive(pid):
+        console.print(f"  [hint]daemon was not running (stale pid {pid}).[/hint]")
+        with contextlib.suppress(OSError):
+            pid_path.unlink()
+        return
+
+    sig = getattr(signal, "SIGTERM", 15)
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        with contextlib.suppress(OSError):
+            pid_path.unlink()
+        console.print(f"  [hint]daemon already gone (pid {pid}).[/hint]")
+        return
+    except OSError as e:
+        console.print(f"[err]Could not stop daemon pid {pid}: {e}[/err]")
+        raise typer.Exit(code=1) from None
+
+    # Give it up to 2s to exit gracefully.
+    for _ in range(20):
+        if not _process_alive(pid):
+            break
+        time.sleep(0.1)
+    if _process_alive(pid):
+        kill_sig = getattr(signal, "SIGKILL", 9)
+        with contextlib.suppress(ProcessLookupError, OSError):
+            os.kill(pid, kill_sig)
+
+    with contextlib.suppress(OSError):
+        pid_path.unlink()
+    console.print(f"  [ok]daemon stopped[/ok] [hint](pid {pid})[/hint]")
+
+
+@app.command("status")
+def status_cmd() -> None:
+    """Show whether the background daemon is running."""
+    import contextlib  # noqa: PLC0415
+
+    pid_path = _daemon_pid_path()
+    log_path = _daemon_log_path()
+    pid = _read_daemon_pid(pid_path)
+    if pid is None:
+        console.print(
+            "  [hint]daemon: not running.[/hint]\n"
+            "  Start it with [value]voiceprompt start[/value]."
+        )
+        return
+    if not _process_alive(pid):
+        console.print(
+            f"  [warn]daemon: stale pid file[/warn] [hint](pid {pid} not alive).[/hint]"
+        )
+        with contextlib.suppress(OSError):
+            pid_path.unlink()
+        return
+    config = cfg_mod.load()
+    console.print(
+        f"  [ok]daemon: running[/ok] [hint](pid {pid})[/hint]\n"
+        f"  Hotkey:  [accent2]{config.hotkey}[/accent2]\n"
+        f"  Log:     [hint]{log_path}[/hint]"
+    )
+
+
+def _daemon_pid_path():
+    return cfg_mod.config_dir() / "daemon.pid"
+
+
+def _daemon_log_path():
+    return cfg_mod.config_dir() / "daemon.log"
+
+
+def _read_daemon_pid(pid_path) -> int | None:
+    try:
+        text = pid_path.read_text().strip()
+    except (OSError, FileNotFoundError):
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _process_alive(pid: int) -> bool:
+    """Cross-platform liveness check that does not actually signal the process."""
+    import os  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            return bool(ok) and exit_code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but lives in a different uid/security context — still alive.
+        return True
+    except OSError:
+        return False
+    return True
+
+
 @app.command("listen")
 def listen_cmd(
     hotkey: str = typer.Option(
