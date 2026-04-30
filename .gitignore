@@ -1,49 +1,88 @@
-# Python
+# ──────────────────────────────────────────────────────────────────────────────
+# Python build / cache
+# ──────────────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Virtual environments
 .venv/
 venv/
 env/
+.env/
+
+# Build artifacts
 build/
 dist/
 *.egg-info/
 *.egg
+*.spec
+pip-wheel-metadata/
+
+# Tooling caches
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-
-# uv
+.pyre/
+.pytype/
+.tox/
+.nox/
 .uv/
 
-# PyInstaller
-*.spec
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
 
-# Editor / OS
+# ──────────────────────────────────────────────────────────────────────────────
+# Editor / IDE / OS junk
+# ──────────────────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+Desktop.ini
 .idea/
 .vscode/
+.fleet/
+*.sublime-workspace
 *.swp
+*.swo
+*.swn
 *~
+*.bak
+*.orig
+*.tmp
+*.rej
 
-# Project artifacts
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-user agent / IDE settings (never commit)
+# ──────────────────────────────────────────────────────────────────────────────
+.claude/
+.cursor/
+.aider*
+.codeium/
+.continue/
+.windsurf*
 .firecrawl/
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Project runtime artifacts
+# ──────────────────────────────────────────────────────────────────────────────
 *.wav
 *.log
 .cache/
 
-# Legacy Swift build (kept as reference but build artifacts excluded)
+# Legacy Swift build (the source is kept under legacy/ as reference)
 legacy/swift-macos/.build/
+legacy/swift-macos/.swiftpm/
 
-# Local agent / IDE settings (per-user, never commit)
-.claude/
-.aider*
-.codeium/
-.continue/
-
-# Secrets — never commit
+# ──────────────────────────────────────────────────────────────────────────────
+# Secrets — NEVER commit
+# ──────────────────────────────────────────────────────────────────────────────
 *.env
 .env
 .env.*
@@ -52,3 +91,4 @@ secrets.json
 credentials.json
 *.pem
 *.key
+*.p12
