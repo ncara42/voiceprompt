@@ -1,0 +1,1135 @@
+"""Interactive menu — status, navigation, settings, help.
+
+The structure is intentionally shallow: a single status panel at the top, a main
+menu with three or four primary actions, and two submenus (``Settings`` for
+configuration, ``Help`` for diagnostics & docs). All selectable rows go through
+``select.select`` so navigation, key bindings, and styling stay consistent.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import sys
+import time
+from pathlib import Path
+
+import questionary
+from questionary import Style as QStyle
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from voiceprompt import claude, gemini, inject, ollama, recorder, reformulator, transcriber, viz
+from voiceprompt import config as cfg_mod
+from voiceprompt import select as sel
+from voiceprompt.clipboard import copy as clipboard_copy
+from voiceprompt.config import Config
+from voiceprompt.styles import banner, console
+
+QSTYLE = QStyle(
+    [
+        ("qmark", "fg:magenta bold"),
+        ("question", "bold"),
+        ("answer", "fg:cyan bold"),
+        ("pointer", "fg:magenta bold"),
+        ("highlighted", "fg:magenta bold"),
+        ("selected", "fg:cyan"),
+        ("instruction", "fg:#888888 italic"),
+    ]
+)
+
+LANGUAGES = ["auto", "es", "en", "fr", "de", "pt", "it"]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Top-level loop
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def run_menu(config: Config) -> None:
+    """Top-level interactive loop. Returns when the user quits."""
+    while True:
+        _render_home(config)
+
+        if not config.is_configured:
+            choices = [
+                sel.Choice("Set up voiceprompt", "setup", hint="guided"),
+                sel.Choice("Settings", "settings", hint="advanced"),
+                sel.Separator(),
+                sel.Choice("Quit", "quit"),
+            ]
+        else:
+            choices = [
+                sel.Choice(
+                    "Listen for hotkey", "listen", hint=f"toggle with {config.hotkey}"
+                ),
+                sel.Choice("Dictate once", "dictate", hint="single recording, in this window"),
+                sel.Separator("preferences"),
+                sel.Choice("Settings", "settings"),
+                sel.Choice("Help & about", "help"),
+                sel.Separator(),
+                sel.Choice("Quit", "quit"),
+            ]
+
+        try:
+            choice = sel.select("", choices, back_value="quit", can_go_back=True)
+        except KeyboardInterrupt:
+            choice = "quit"
+
+        if choice in (None, "quit"):
+            console.print("\n  [hint]bye.[/hint]\n")
+            return
+        if choice == "setup":
+            _action_setup(config)
+        elif choice == "settings":
+            _action_settings(config)
+        elif choice == "help":
+            _action_help(config)
+        elif choice == "listen":
+            _action_listen(config)
+        elif choice == "dictate":
+            _action_dictate(config)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Setup wizard (first-run flow)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_setup(config: Config) -> None:
+    """Guided first-run flow: pick provider → paste key → optional connection test."""
+    console.clear()
+    banner(_get_version())
+    console.print(_panel(
+        "Three quick steps and you're ready to dictate.",
+        title="Setup",
+    ))
+    console.print()
+
+    # Step 1 — provider
+    provider = sel.select(
+        "1.  Choose an AI provider",
+        [
+            sel.Choice(
+                "Claude  (Anthropic)", "claude",
+                hint="paid · highest quality",
+            ),
+            sel.Choice(
+                "Ollama Cloud", "ollama",
+                hint="free tier · open-weight models (gpt-oss, qwen…)",
+            ),
+            sel.Choice(
+                "Google Gemini", "gemini",
+                hint="generous free tier · gemini-2.5-flash",
+            ),
+        ],
+        default=reformulator.active_provider(config),
+        back_value=None,
+    )
+    if provider is None:
+        return
+    if provider != config.provider:
+        config.provider = provider
+        cfg_mod.save(config)
+
+    # Step 2 — API key
+    if not _set_api_key(config, provider, intro=True):
+        return
+
+    # Step 3 — optional connection test
+    do_test = sel.select(
+        "3.  Verify the connection?",
+        [
+            sel.Choice("Yes, run a quick ping", True, hint="recommended"),
+            sel.Choice("Skip", False),
+        ],
+        default=True,
+        back_value=False,
+    )
+    if do_test:
+        _action_test(config, pause_after=False)
+    _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Settings submenu
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_settings(config: Config) -> None:
+    while True:
+        _render_home(config, subtitle="Settings")
+        provider = reformulator.active_provider(config)
+        provider_label = reformulator.PROVIDER_LABELS[provider]
+
+        choices = [
+            sel.Separator("provider"),
+            sel.Choice("AI provider", "provider", hint=provider_label),
+            sel.Choice("Model", "model", hint=reformulator.active_model(config)),
+
+            sel.Separator("api keys"),
+            sel.Choice(
+                "Anthropic",
+                "key:claude",
+                hint=_key_state(config.anthropic_api_key),
+            ),
+            sel.Choice(
+                "Ollama Cloud",
+                "key:ollama",
+                hint=_key_state(config.ollama_api_key),
+            ),
+            sel.Choice(
+                "Google Gemini",
+                "key:gemini",
+                hint=_key_state(config.gemini_api_key),
+            ),
+
+            sel.Separator("transcription"),
+            sel.Choice(
+                "Model",
+                "transcription",
+                hint=_short_transcription_model(config.transcription_model)
+                + (" · cached" if transcriber.is_model_on_disk(config.transcription_model) else " · not downloaded"),
+            ),
+            sel.Choice("Language", "language", hint=config.language),
+
+            sel.Separator("behavior"),
+            sel.Choice("Hotkey", "hotkey", hint=config.hotkey),
+            sel.Choice(
+                "Auto-paste into active app",
+                "clipboard",
+                hint="on" if config.auto_copy_clipboard else "off",
+            ),
+            sel.Choice("Temperature", "temp", hint=f"{config.temperature:.2f}"),
+            sel.Choice("System prompt", "prompt", hint="edit"),
+
+            sel.Separator(),
+            sel.Choice("Back", "back"),
+        ]
+
+        try:
+            choice = sel.select("", choices, back_value="back")
+        except KeyboardInterrupt:
+            return
+
+        if choice in (None, "back"):
+            return
+        if choice == "provider":
+            _settings_pick_provider(config)
+        elif choice == "model":
+            _settings_pick_model(config)
+        elif choice == "key:claude":
+            _set_api_key(config, "claude", intro=False)
+            _pause()
+        elif choice == "key:ollama":
+            _set_api_key(config, "ollama", intro=False)
+            _pause()
+        elif choice == "key:gemini":
+            _set_api_key(config, "gemini", intro=False)
+            _pause()
+        elif choice == "transcription":
+            _settings_pick_transcription_model(config)
+        elif choice == "language":
+            _settings_pick_language(config)
+        elif choice == "hotkey":
+            _settings_edit_hotkey(config)
+        elif choice == "clipboard":
+            config.auto_copy_clipboard = not config.auto_copy_clipboard
+            cfg_mod.save(config)
+        elif choice == "temp":
+            _settings_edit_temperature(config)
+        elif choice == "prompt":
+            _settings_edit_system_prompt(config)
+
+
+def _settings_pick_provider(config: Config) -> None:
+    picked = sel.select(
+        "AI provider",
+        [
+            sel.Choice(label, key)
+            for key, label in reformulator.PROVIDER_LABELS.items()
+        ],
+        default=config.provider,
+        back_value=None,
+    )
+    if picked and picked != config.provider:
+        config.provider = picked
+        cfg_mod.save(config)
+
+
+def _settings_pick_model(config: Config) -> None:
+    provider = reformulator.active_provider(config)
+    if provider == "ollama":
+        models, current = ollama.MODELS, config.ollama_model
+    elif provider == "gemini":
+        models, current = gemini.MODELS, config.gemini_model
+    else:
+        models, current = claude.MODELS, config.model
+
+    picked = sel.select(
+        f"{reformulator.PROVIDER_LABELS[provider]} · model",
+        [sel.Choice(name, name, hint=desc) for name, desc in models],
+        default=current,
+        back_value=None,
+    )
+    if not picked:
+        return
+    if provider == "ollama":
+        config.ollama_model = picked
+    elif provider == "gemini":
+        config.gemini_model = picked
+    else:
+        config.model = picked
+    cfg_mod.save(config)
+
+
+def _settings_pick_transcription_model(config: Config) -> None:
+    picked = sel.select(
+        "Transcription model",
+        [
+            sel.Choice(_short_transcription_model(name), name, hint=desc)
+            for name, desc in transcriber.PARAKEET_MODELS
+        ],
+        default=config.transcription_model,
+        back_value=None,
+    )
+    if not picked:
+        return
+    config.transcription_model = picked
+    cfg_mod.save(config)
+    _ensure_transcription_model_downloaded(picked, ask_confirm=False)
+
+
+def _settings_pick_language(config: Config) -> None:
+    picked = sel.select(
+        "Dictation language",
+        [
+            sel.Choice(
+                code,
+                code,
+                hint="Parakeet auto-detects; this only hints the AI provider"
+                if code == "auto"
+                else "",
+            )
+            for code in LANGUAGES
+        ],
+        default=config.language,
+        back_value=None,
+    )
+    if picked:
+        config.language = picked
+        cfg_mod.save(config)
+
+
+def _settings_edit_hotkey(config: Config) -> None:
+    console.print()
+    console.print(
+        f"  [hint]Current hotkey:[/hint] [accent2]{config.hotkey}[/accent2]"
+    )
+    console.print(
+        "  [hint]Examples: ctrl+space · ctrl+shift+space · cmd+option+v[/hint]"
+    )
+    val = questionary.text(
+        "New hotkey:",
+        default=config.hotkey,
+        style=QSTYLE,
+    ).ask()
+    if val and val.strip() and val.strip() != config.hotkey:
+        config.hotkey = val.strip()
+        cfg_mod.save(config)
+        console.print("  [ok]Hotkey updated.[/ok]")
+        console.print(
+            "  [hint]Restart the listen daemon for the change to take effect.[/hint]"
+        )
+        _pause()
+
+
+def _settings_edit_temperature(config: Config) -> None:
+    console.print()
+    val = questionary.text(
+        "Temperature (0.0 = deterministic, 1.0 = creative):",
+        default=str(config.temperature),
+        validate=lambda x: _is_float_in_range(x, 0.0, 2.0),
+        style=QSTYLE,
+    ).ask()
+    if val:
+        config.temperature = float(val)
+        cfg_mod.save(config)
+
+
+def _settings_edit_system_prompt(config: Config) -> None:
+    console.print()
+    console.print(
+        Panel(
+            Text(config.system_prompt, style="value"),
+            title="[accent2]current system prompt[/accent2]",
+            title_align="left",
+            border_style="hint",
+            padding=(1, 2),
+        )
+    )
+    new = questionary.text(
+        "New system prompt (Enter on an empty line to cancel):",
+        style=QSTYLE,
+        multiline=True,
+    ).ask()
+    if new and new.strip():
+        config.system_prompt = new.strip()
+        cfg_mod.save(config)
+        console.print("  [ok]Prompt updated.[/ok]")
+    _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Help submenu
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_help(config: Config) -> None:
+    while True:
+        _render_home(config, subtitle="Help & about")
+        choices = [
+            sel.Choice("Quick start", "quickstart"),
+            sel.Choice("Keyboard & permissions", "perms"),
+            sel.Choice(
+                "Test provider connection",
+                "test",
+                hint=reformulator.PROVIDER_LABELS[reformulator.active_provider(config)],
+            ),
+            sel.Choice("System information", "info"),
+            sel.Separator(),
+            sel.Choice("Back", "back"),
+        ]
+        try:
+            choice = sel.select("", choices, back_value="back")
+        except KeyboardInterrupt:
+            return
+
+        if choice in (None, "back"):
+            return
+        if choice == "quickstart":
+            _show_quickstart(config)
+        elif choice == "perms":
+            _show_permissions(config)
+        elif choice == "test":
+            _action_test(config)
+        elif choice == "info":
+            _action_info(config)
+
+
+def _show_quickstart(config: Config) -> None:
+    console.clear()
+    banner(_get_version())
+    body = Text.assemble(
+        ("voiceprompt runs as a background ", "value"),
+        ("daemon", "accent"),
+        (" listening for a global hotkey.\n", "value"),
+        ("You don't need to come back to this CLI to dictate.\n\n", "value"),
+        ("STEPS\n", "section"),
+        ("  1. Start the daemon from this menu, or run ", "value"),
+        ("voiceprompt listen", "kbd"),
+        (" in any terminal.\n", "value"),
+        ("  2. Press ", "value"),
+        (config.hotkey, "kbd"),
+        (" anywhere on your system to start recording.\n", "value"),
+        ("  3. Press it again to stop.\n", "value"),
+        ("  4. Parakeet transcribes locally; the AI provider refines the prompt.\n", "value"),
+        ("  5. The result is pasted into whatever app had focus.\n\n", "value"),
+        ("AUTO-START AT LOGIN\n", "section"),
+        ("  macOS    launchd plist or Login Items → ", "value"),
+        ("voiceprompt listen", "kbd"),
+        ("\n", ""),
+        ("  Linux    systemd --user service running ", "value"),
+        ("voiceprompt listen", "kbd"),
+        ("\n", ""),
+        ("  Windows  Task Scheduler at logon → ", "value"),
+        ("voiceprompt listen", "kbd"),
+    )
+    console.print(_panel(body, title="Quick start"))
+    _pause()
+
+
+def _show_permissions(config: Config) -> None:
+    console.clear()
+    banner(_get_version())
+    body = Text.assemble(
+        ("RECORDING & PASTING (macOS)\n", "section"),
+        ("  System Settings → Privacy & Security → ", "value"),
+        ("Microphone\n", "accent"),
+        ("                                          records audio\n", "hint"),
+        ("  System Settings → Privacy & Security → ", "value"),
+        ("Input Monitoring\n", "accent"),
+        ("                                          listens for the global hotkey\n", "hint"),
+        ("  System Settings → Privacy & Security → ", "value"),
+        ("Accessibility\n", "accent"),
+        ("                                          simulates Cmd+V to paste\n", "hint"),
+        ("  System Settings → Privacy & Security → ", "value"),
+        ("Automation\n", "accent"),
+        ("                                          reads the active app name\n\n", "hint"),
+        ("HOTKEY\n", "section"),
+        ("  Default ", "value"),
+        (config.hotkey, "kbd"),
+        (".  Change it under Settings → Hotkey.\n", "value"),
+        ("  Press it once to start recording, again to stop.\n\n", "value"),
+        ("LINUX\n", "section"),
+        ("  Install ", "value"),
+        ("xdotool", "kbd"),
+        (" (X11) or ", "value"),
+        ("wtype", "kbd"),
+        (" (Wayland) for auto-paste.\n", "value"),
+        ("  Some hotkey daemons may need uinput access (see pynput docs).\n", "value"),
+    )
+    console.print(_panel(body, title="Keyboard & permissions"))
+    _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Connection test
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_test(config: Config, *, pause_after: bool = True) -> None:
+    console.print()
+    started = time.monotonic()
+    provider_label = reformulator.PROVIDER_LABELS[reformulator.active_provider(config)]
+    short = reformulator.short_model(config)
+    with console.status(f"[brand]pinging {short}…[/brand]", spinner="dots"):
+        try:
+            response = reformulator.quick_test(config)
+            elapsed = time.monotonic() - started
+            console.print(
+                Panel(
+                    Text.assemble(
+                        ("[ok] ", "ok"),
+                        (f"{provider_label} · {short}\n\n", "ok2"),
+                        (response, "value"),
+                    ),
+                    subtitle=f"[hint]{elapsed:.2f}s[/hint]",
+                    subtitle_align="right",
+                    border_style="ok",
+                    padding=(1, 2),
+                    expand=False,
+                )
+            )
+        except reformulator.AuthError as e:
+            console.print(_error_panel("Authentication failed", str(e), hint="Check the API key in Settings."))
+        except reformulator.QuotaExceededError as e:
+            hint = (
+                f"Wait ~{e.retry_after:.0f}s or switch models in Settings."
+                if e.retry_after
+                else "Try again in a moment, or switch models in Settings."
+            )
+            console.print(_error_panel("Quota exceeded", str(e), hint=hint))
+        except reformulator.ProviderError as e:
+            console.print(_error_panel("Provider error", str(e)))
+    if pause_after:
+        _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Listen daemon
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_listen(
+    config: Config,
+    *,
+    hotkey_override: str | None = None,
+    target: str | None = None,
+    no_paste: bool = False,
+    no_claude: bool = False,
+) -> None:
+    """Run the global-hotkey daemon loop. Shared by the menu and ``voiceprompt listen``."""
+    from voiceprompt import hotkey as hk  # noqa: PLC0415
+
+    if not hk.is_supported():
+        console.print(
+            "  [err]Global hotkey is not supported in this environment.[/err] "
+            f"[hint]{hk.import_error_hint()}[/hint]"
+        )
+        _pause()
+        return
+
+    combo = hotkey_override or config.hotkey
+    ctx = hk.HotkeyContext()
+    try:
+        listener = hk.listen(combo, ctx)
+    except hk.HotkeyError as e:
+        console.print(f"  [err]Could not register hotkey:[/err] {e}")
+        _pause()
+        return
+
+    console.clear()
+    banner(_get_version())
+    console.print(_panel(
+        Text.assemble(
+            ("Hotkey active · ", "ok"),
+            (combo, "accent"),
+            ("\n\n", ""),
+            ("Press the hotkey from any app to start recording, then again to stop.\n", "value"),
+            ("Ctrl+C in this window quits the daemon.", "hint"),
+        ),
+        title="Listening",
+    ))
+
+    try:
+        while True:
+            ctx.start_event.wait()
+            ctx.start_event.clear()
+
+            target_app: str | None = None
+            target_tty: str | None = None
+            if not no_paste:
+                if target:
+                    target_app = target
+                else:
+                    if not no_claude:
+                        claude_target = inject.find_claude_target()
+                        if claude_target is not None:
+                            _label, target_tty = claude_target
+                    if target_tty is None:
+                        target_app = inject.get_frontmost_app()
+
+            console.clear()
+            banner(_get_version())
+            target_text: Text
+            if target_tty:
+                target_text = Text.assemble(
+                    ("target  ", "hint"),
+                    ("Claude Code ", "accent"),
+                    (f"({target_tty})", "hint"),
+                )
+            elif target_app:
+                target_text = Text.assemble(("target  ", "hint"), (target_app, "accent"))
+            else:
+                target_text = Text("target  (none — clipboard only)", style="hint")
+            console.print(
+                _panel(
+                    Text.assemble(
+                        ("hotkey  ", "hint"),
+                        (combo, "accent"),
+                        ("\n", ""),
+                        target_text,
+                    ),
+                    title="Recording",
+                )
+            )
+
+            _action_dictate(
+                config,
+                target_app=target_app,
+                target_tty=target_tty,
+                exit_after=True,
+                hotkey_ctx=ctx,
+            )
+
+            console.print(
+                f"\n  [hint]ready · press [/hint][accent2]{combo}[/accent2]"
+                f"[hint] to record again, or Ctrl+C here to quit.[/hint]"
+            )
+    except KeyboardInterrupt:
+        console.print("\n  [hint]daemon stopped.[/hint]\n")
+    finally:
+        with contextlib.suppress(Exception):
+            listener.stop()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Single-shot dictation cycle
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_dictate(
+    config: Config,
+    *,
+    target_app: str | None = None,
+    target_tty: str | None = None,
+    exit_after: bool = False,
+    hotkey_ctx=None,
+) -> None:
+    """Run a dictation cycle: record → transcribe → refine → copy/paste."""
+    console.print()
+
+    # Make sure the transcription model is on disk before recording -- downloading
+    # mid-dictation would block for minutes and waste the captured audio.
+    if not _ensure_transcription_model_downloaded(config.transcription_model, ask_confirm=True):
+        if not exit_after:
+            _pause()
+        return
+
+    rec = recorder.Recorder(sample_rate=config.sample_rate)
+
+    started = time.monotonic()
+    try:
+        rec.start()
+    except recorder.NoInputDeviceError:
+        console.print("  [err][!] No audio input found.[/err]")
+        if not exit_after:
+            _pause()
+        return
+    except Exception as e:  # noqa: BLE001
+        console.print(f"  [err][!] Could not start recording:[/err] {e}")
+        if not exit_after:
+            _pause()
+        return
+
+    committed = viz.record_visual(rec, hotkey_ctx=hotkey_ctx)
+
+    result = rec.stop()
+    if not committed:
+        console.print("  [hint]recording cancelled.[/hint]")
+        if result is not None:
+            with contextlib.suppress(OSError):
+                result[0].unlink(missing_ok=True)
+        if not exit_after:
+            _pause()
+        return
+    if result is None:
+        console.print("  [warn]Recording too short. Try again.[/warn]")
+        if not exit_after:
+            _pause()
+        return
+
+    wav_path, duration, peak = result
+    record_secs = time.monotonic() - started
+    console.print(
+        f"  [hint]captured[/hint] [value]{duration:.1f}s[/value]   "
+        f"[hint]peak[/hint] {_peak_bar(peak)} "
+        f"[value]{peak}[/value][hint]/32767[/hint]"
+    )
+
+    if peak < 50:
+        console.print()
+        console.print(
+            _error_panel(
+                "Silent audio",
+                f"peak = {peak}",
+                hint=(
+                    "Common causes:\n"
+                    "  · the terminal does not have microphone permission\n"
+                    "  · the input device is muted or disconnected\n"
+                    "  · another app is using the microphone exclusively\n\n"
+                    "macOS:   System Settings → Privacy & Security → Microphone\n"
+                    "Linux:   check with `arecord -l`\n"
+                    "Windows: Privacy → Microphone → allow desktop apps"
+                ),
+            )
+        )
+        with contextlib.suppress(OSError):
+            wav_path.unlink(missing_ok=True)
+        if not exit_after:
+            _pause()
+        return
+
+    if peak < 500:
+        console.print(
+            f"  [warn][!] Audio is low[/warn] "
+            f"[hint](peak {peak}). Speak closer to the mic.[/hint]"
+        )
+
+    # Step 1: local STT with Parakeet
+    transcript: str | None = None
+    first_load = not transcriber.is_model_cached(config.transcription_model)
+    short_name = _short_transcription_model(config.transcription_model)
+    spinner_msg = (
+        f"[brand]loading parakeet · {short_name}…[/brand]"
+        if first_load
+        else f"[brand]transcribing · {short_name}…[/brand]"
+    )
+    with console.status(spinner_msg, spinner="dots"):
+        try:
+            transcript = transcriber.transcribe(
+                wav_path, model_name=config.transcription_model, language=config.language
+            )
+        except transcriber.ModelDownloadError as e:
+            console.print(_error_panel("Model download failed", str(e),
+                                       hint="Check your internet connection or pick a smaller model."))
+        except transcriber.TranscriptionError as e:
+            console.print(_error_panel("Transcription failed", str(e)))
+
+    if not transcript:
+        with contextlib.suppress(OSError):
+            Path(wav_path).unlink(missing_ok=True)
+        if transcript is not None:
+            console.print("  [warn]Parakeet did not detect speech. Try again.[/warn]")
+        if not exit_after:
+            _pause()
+        return
+
+    console.print()
+    console.print(
+        Panel(
+            Text(transcript, style="value"),
+            border_style="subtle",
+            title="[accent2]transcription[/accent2]",
+            title_align="left",
+            padding=(0, 2),
+        )
+    )
+
+    # Step 2: reformulate with the active provider
+    final_prompt: str | None = None
+    provider_label = reformulator.PROVIDER_LABELS[reformulator.active_provider(config)]
+    refine_started = time.monotonic()
+    with console.status(
+        f"[brand]refining · {reformulator.short_model(config)}…[/brand]",
+        spinner="dots",
+    ):
+        try:
+            final_prompt = reformulator.reformulate_text(transcript, config)
+        except reformulator.AuthError as e:
+            console.print(_error_panel("Authentication failed", str(e),
+                                       hint="Check your API key in Settings."))
+        except reformulator.QuotaExceededError as e:
+            hint = f"Retry in ~{e.retry_after:.0f}s." if e.retry_after else "Switch models or wait a moment."
+            console.print(_error_panel("Quota exceeded", str(e), hint=hint))
+        except reformulator.ProviderError as e:
+            console.print(_error_panel(f"{provider_label} error", str(e)))
+    refine_secs = time.monotonic() - refine_started
+
+    with contextlib.suppress(OSError):
+        Path(wav_path).unlink(missing_ok=True)
+
+    if final_prompt is None:
+        if not exit_after:
+            _pause()
+        return
+
+    word_count = len(final_prompt.split())
+    total_secs = time.monotonic() - started
+    meta = (
+        f"[hint]{record_secs:.1f}s rec · "
+        f"{refine_secs:.1f}s {reformulator.active_provider(config)} · "
+        f"{total_secs:.1f}s total · "
+        f"{word_count} words[/hint]"
+    )
+    console.print()
+    console.print(
+        Panel(
+            Text(final_prompt, style="value"),
+            border_style="ok",
+            title="[ok]refined prompt[/ok]",
+            subtitle=meta,
+            subtitle_align="right",
+            title_align="left",
+            padding=(1, 2),
+        )
+    )
+
+    copied = False
+    has_target = bool(target_tty or target_app)
+    if config.auto_copy_clipboard:
+        copied = clipboard_copy(final_prompt)
+        if copied:
+            if not has_target:
+                console.print(
+                    "\n  [ok]copied to clipboard[/ok]   "
+                    "[hint]paste with [/hint][kbd]⌘V[/kbd][hint] / [/hint][kbd]Ctrl+V[/kbd]"
+                )
+        else:
+            console.print(
+                "\n  [warn]Could not copy.[/warn] "
+                "[hint]Install xclip / xsel on Linux, or select the text manually.[/hint]"
+            )
+
+    if copied and has_target:
+        ok = inject.paste_to_claude(target_tty) if target_tty else inject.paste_to(target_app)
+        if not ok:
+            if target_tty:
+                console.print(
+                    "\n  [warn]Could not focus the Claude session.[/warn] "
+                    "[hint]Paste manually with ⌘V wherever you want.[/hint]"
+                )
+            else:
+                console.print(
+                    "\n  [warn]Could not paste automatically.[/warn] "
+                    f"[hint]{inject.missing_tool_hint()}[/hint]"
+                )
+
+    if not exit_after:
+        _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# System info
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _action_info(config: Config) -> None:
+    sys_table = Table(show_header=False, box=None, padding=(0, 2))
+    sys_table.add_column(style="hint", justify="right")
+    sys_table.add_column(style="value")
+    sys_table.add_row("version", _get_version())
+    sys_table.add_row("python", sys.version.split()[0])
+    sys_table.add_row("platform", sys.platform)
+    sys_table.add_row("config", str(cfg_mod.config_path()))
+
+    provider = reformulator.active_provider(config)
+    cfg_table = Table(show_header=False, box=None, padding=(0, 2))
+    cfg_table.add_column(style="hint", justify="right")
+    cfg_table.add_column(style="value")
+    cfg_table.add_row("provider", reformulator.PROVIDER_LABELS[provider])
+    cfg_table.add_row("model", reformulator.short_model(config))
+    cfg_table.add_row("transcription", _short_transcription_model(config.transcription_model))
+    cfg_table.add_row("language", config.language)
+    cfg_table.add_row("hotkey", config.hotkey)
+    cfg_table.add_row("sample rate", f"{config.sample_rate} Hz")
+    cfg_table.add_row("anthropic key", _key_state(config.anthropic_api_key))
+    cfg_table.add_row("ollama key", _key_state(config.ollama_api_key))
+    cfg_table.add_row("gemini key", _key_state(config.gemini_api_key))
+
+    console.print()
+    console.print(Panel(sys_table, border_style="hint", title="[accent2]system[/accent2]", title_align="left"))
+    console.print(Panel(cfg_table, border_style="hint", title="[accent2]configuration[/accent2]", title_align="left"))
+
+    try:
+        devs = recorder.list_input_devices()
+        if devs:
+            dev_table = Table(show_header=False, box=None, padding=(0, 1))
+            dev_table.add_column(style="brand2", width=3)
+            dev_table.add_column(style="hint", justify="right", width=4)
+            dev_table.add_column(style="value")
+            dev_table.add_column(style="hint")
+            for d in devs:
+                marker = "›" if d["default"] else " "
+                dev_table.add_row(marker, str(d["index"]), d["name"], f"{d['channels']}ch")
+            console.print(Panel(dev_table, border_style="hint", title="[accent2]microphones[/accent2]", title_align="left"))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"  [warn]Could not list devices: {e}[/warn]")
+
+    _pause()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Status panel + helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _render_home(config: Config, *, subtitle: str | None = None) -> None:
+    console.clear()
+    banner(_get_version())
+    _render_status(config, subtitle=subtitle)
+
+
+def _render_status(config: Config, *, subtitle: str | None = None) -> None:
+    """Compact status block: state, provider, transcription, hotkey, language."""
+    state_text = (
+        Text("ready", style="ok")
+        if config.is_configured
+        else Text("setup needed", style="warn")
+    )
+
+    provider = reformulator.active_provider(config)
+    provider_text = Text.assemble(
+        Text(reformulator.PROVIDER_LABELS[provider], style="value"),
+        Text("  ·  ", style="hint"),
+        Text(reformulator.short_model(config), style="accent2"),
+    )
+
+    transcription_cached = transcriber.is_model_on_disk(config.transcription_model)
+    transcription_text = Text.assemble(
+        Text(_short_transcription_model(config.transcription_model), style="value"),
+        Text("  ·  ", style="hint"),
+        Text("cached", style="ok2") if transcription_cached else Text("not downloaded", style="warn"),
+    )
+
+    grid = Table.grid(padding=(0, 2), expand=False)
+    grid.add_column(style="hint", justify="right")
+    grid.add_column()
+    grid.add_row("state", state_text)
+    grid.add_row("provider", provider_text)
+    grid.add_row("transcription", transcription_text)
+    grid.add_row("hotkey", Text(config.hotkey, style="value"))
+    grid.add_row("language", Text(config.language, style="value"))
+
+    title_text = "[accent2]status[/accent2]"
+    if subtitle:
+        title_text = f"[accent2]status[/accent2] [hint]·[/hint] [brand]{subtitle}[/brand]"
+
+    console.print(
+        Panel(
+            grid,
+            border_style="hint",
+            title=title_text,
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
+    console.print()
+
+
+def _panel(body, *, title: str) -> Panel:
+    return Panel(
+        body,
+        border_style="brand",
+        title=f"[brand]{title}[/brand]",
+        title_align="left",
+        padding=(1, 2),
+        expand=False,
+    )
+
+
+def _error_panel(title: str, body: str, *, hint: str | None = None) -> Panel:
+    text = Text(body, style="value")
+    if hint:
+        text.append("\n\n")
+        text.append(hint, style="hint")
+    return Panel(
+        text,
+        border_style="err",
+        title=f"[err][!] {title}[/err]",
+        title_align="left",
+        padding=(1, 2),
+        expand=False,
+    )
+
+
+def _key_state(value: str) -> str:
+    return "configured" if value.strip() else "not set"
+
+
+def _pause() -> None:
+    console.print()
+    with contextlib.suppress(KeyboardInterrupt):
+        questionary.press_any_key_to_continue("Press any key to continue…").ask()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Provider key prompt (shared by the wizard and the settings menu)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+_KEY_PROMPTS = {
+    "claude": (
+        "Anthropic API key",
+        "https://console.anthropic.com/settings/keys",
+        claude.looks_like_anthropic_key,
+        "the key does not start with 'sk-ant-' like Anthropic keys usually do",
+    ),
+    "ollama": (
+        "Ollama Cloud API key",
+        "https://ollama.com/settings/keys",
+        ollama.looks_like_ollama_key,
+        "the key looks unusually short",
+    ),
+    "gemini": (
+        "Google Gemini API key",
+        "https://aistudio.google.com/apikey",
+        gemini.looks_like_gemini_key,
+        "the key does not start with 'AIza' like AI Studio keys usually do",
+    ),
+}
+
+
+def _set_api_key(config: Config, provider: str, *, intro: bool) -> bool:
+    """Prompt for the API key of ``provider`` and persist it. Returns True on success."""
+    title, url, validator, warn_text = _KEY_PROMPTS[provider]
+    body = Text.assemble(
+        ("Get a key at:\n", "value"),
+        (f"  {url}\n\n", "accent2"),
+        ("It is saved locally at\n", "hint"),
+        (f"  {cfg_mod.config_path()}", "subtle"),
+    )
+    console.print(_panel(body, title=("2.  " + title) if intro else title))
+    console.print()
+
+    try:
+        key = sel.password_input("Paste your API key:")
+    except KeyboardInterrupt:
+        console.print("  [warn]cancelled.[/warn]")
+        return False
+    if not key:
+        console.print("  [warn]cancelled.[/warn]")
+        return False
+
+    cleaned = key.strip()
+    if not validator(cleaned):
+        console.print(f"  [warn][!] Warning:[/warn] [hint]{warn_text}. Saving anyway.[/hint]")
+
+    if provider == "ollama":
+        config.ollama_api_key = cleaned
+    elif provider == "gemini":
+        config.gemini_api_key = cleaned
+    else:
+        config.anthropic_api_key = cleaned
+    cfg_mod.save(config)
+    console.print(f"  [ok]Saved to[/ok] [hint]{cfg_mod.config_path()}[/hint]")
+    return True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Misc helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _ensure_transcription_model_downloaded(model_name: str, *, ask_confirm: bool) -> bool:
+    """Make sure the Parakeet model weights are on disk. Returns False if user cancels."""
+    if transcriber.is_model_on_disk(model_name):
+        return True
+
+    size = transcriber.model_download_size(model_name) or "around 1.2 GB"
+    short = _short_transcription_model(model_name)
+    if ask_confirm:
+        console.print(
+            f"\n  [warn][!] Parakeet model '{short}' is not downloaded yet[/warn] "
+            f"[hint]({size}).[/hint]"
+        )
+        proceed = questionary.confirm(
+            f"Download '{short}' now ({size})?",
+            default=True,
+            style=QSTYLE,
+        ).ask()
+        if not proceed:
+            console.print("  [hint]Cancelled. Pick a different model in Settings.[/hint]")
+            return False
+
+    console.print(
+        f"  [brand]Downloading parakeet '{short}' ({size}) — first run, this can take a while…[/brand]"
+    )
+    try:
+        transcriber.download_model(model_name)
+    except transcriber.ModelDownloadError as e:
+        console.print(_error_panel("Download failed", str(e),
+                                   hint="Check your internet connection or pick a different model."))
+        return False
+    console.print(f"  [ok]'{short}' downloaded.[/ok]")
+    return True
+
+
+def _short_transcription_model(model_id: str) -> str:
+    return model_id.split("/", 1)[1] if "/" in model_id else model_id
+
+
+def _peak_bar(peak: int, width: int = 16) -> str:
+    """Visual bar of the recording peak. Color shifts as it approaches clipping."""
+    ratio = max(0.0, min(1.0, peak / 32767))
+    filled = int(round(ratio * width))
+    if peak >= 32000:
+        color = "err"
+    elif peak >= 25000:
+        color = "warn"
+    elif peak >= 500:
+        color = "ok"
+    else:
+        color = "subtle"
+    bar = "█" * filled + "·" * (width - filled)
+    return f"[{color}][{bar}][/{color}]"
+
+
+def _is_float_in_range(s: str, lo: float, hi: float) -> bool | str:
+    try:
+        v = float(s)
+    except ValueError:
+        return "Must be a number."
+    if not (lo <= v <= hi):
+        return f"Must be between {lo} and {hi}."
+    return True
+
+
+def _get_version() -> str:
+    try:
+        from voiceprompt import __version__  # noqa: PLC0415
+
+        return __version__
+    except ImportError:
+        return "?"

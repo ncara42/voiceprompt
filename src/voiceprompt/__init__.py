@@ -1,0 +1,3 @@
+"""voiceprompt -- Speak. Claude refines. Paste."""
+
+__version__ = "0.2.0"

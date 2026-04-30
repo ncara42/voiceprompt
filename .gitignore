@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# uv
+.uv/
+
+# PyInstaller
+*.spec
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Project artifacts
+.firecrawl/
+*.wav
+*.log
+.cache/
+
+# Legacy Swift build (kept as reference but build artifacts excluded)
+legacy/swift-macos/.build/
+
+# Local agent / IDE settings (per-user, never commit)
+.claude/
+.aider*
+.codeium/
+.continue/
+
+# Secrets — never commit
+*.env
+.env
+.env.*
+config.json
+secrets.json
+credentials.json
+*.pem
+*.key
