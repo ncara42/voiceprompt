@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import io
 import unittest
 from unittest.mock import patch
 
+from rich.console import Console
+
 from voiceprompt import menu, recorder
 from voiceprompt.config import Config
+from voiceprompt.styles import theme
 
 
 class FakeConsole:
@@ -37,6 +41,30 @@ class DictateActionTests(unittest.TestCase):
             fake_console.messages[-1],
             "  [err][!] No audio input found.[/err]",
         )
+
+
+class ConnectionTestActionTests(unittest.TestCase):
+    def test_success_panel_does_not_repeat_provider_ok_response(self) -> None:
+        output = io.StringIO()
+        rich_console = Console(
+            file=output,
+            force_terminal=True,
+            color_system=None,
+            width=50,
+            theme=theme,
+        )
+
+        with (
+            patch.object(menu, "console", rich_console),
+            patch.object(menu.reformulator, "quick_test", return_value="OK"),
+            patch.object(menu.time, "monotonic", side_effect=[100.0, 100.62]),
+        ):
+            menu._action_test(Config(), pause_after=False)
+
+        rendered = output.getvalue()
+
+        self.assertIn("[ok] Claude (Anthropic) · haiku 4.5", rendered)
+        self.assertNotIn("\n│  OK", rendered)
 
 
 if __name__ == "__main__":

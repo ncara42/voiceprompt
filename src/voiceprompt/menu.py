@@ -19,7 +19,17 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from voiceprompt import claude, gemini, inject, ollama, recorder, reformulator, transcriber, viz
+from voiceprompt import (
+    claude,
+    gemini,
+    github_models,
+    inject,
+    ollama,
+    recorder,
+    reformulator,
+    transcriber,
+    viz,
+)
 from voiceprompt import config as cfg_mod
 from voiceprompt import select as sel
 from voiceprompt.clipboard import copy as clipboard_copy
@@ -121,6 +131,10 @@ def _action_setup(config: Config) -> None:
                 "Google Gemini", "gemini",
                 hint="generous free tier · gemini-2.5-flash",
             ),
+            sel.Choice(
+                "GitHub Models", "github_models",
+                hint="use a GitHub token · Copilot ecosystem",
+            ),
         ],
         default=reformulator.active_provider(config),
         back_value=None,
@@ -182,6 +196,11 @@ def _action_settings(config: Config) -> None:
                 "key:gemini",
                 hint=_key_state(config.gemini_api_key),
             ),
+            sel.Choice(
+                "GitHub Models",
+                "key:github_models",
+                hint=_key_state(config.github_models_token),
+            ),
 
             sel.Separator("transcription"),
             sel.Choice(
@@ -225,6 +244,9 @@ def _action_settings(config: Config) -> None:
         elif choice == "key:gemini":
             _set_api_key(config, "gemini", intro=False)
             _pause()
+        elif choice == "key:github_models":
+            _set_api_key(config, "github_models", intro=False)
+            _pause()
         elif choice == "transcription":
             _settings_pick_transcription_model(config)
         elif choice == "language":
@@ -261,6 +283,8 @@ def _settings_pick_model(config: Config) -> None:
         models, current = ollama.MODELS, config.ollama_model
     elif provider == "gemini":
         models, current = gemini.MODELS, config.gemini_model
+    elif provider == "github_models":
+        models, current = github_models.MODELS, config.github_models_model
     else:
         models, current = claude.MODELS, config.model
 
@@ -276,6 +300,8 @@ def _settings_pick_model(config: Config) -> None:
         config.ollama_model = picked
     elif provider == "gemini":
         config.gemini_model = picked
+    elif provider == "github_models":
+        config.github_models_model = picked
     else:
         config.model = picked
     cfg_mod.save(config)
@@ -490,14 +516,13 @@ def _action_test(config: Config, *, pause_after: bool = True) -> None:
     short = reformulator.short_model(config)
     with console.status(f"[brand]pinging {short}…[/brand]", spinner="dots"):
         try:
-            response = reformulator.quick_test(config)
+            reformulator.quick_test(config)
             elapsed = time.monotonic() - started
             console.print(
                 Panel(
                     Text.assemble(
                         ("[ok] ", "ok"),
-                        (f"{provider_label} · {short}\n\n", "ok2"),
-                        (response, "value"),
+                        (f"{provider_label} · {short}", "ok2"),
                     ),
                     subtitle=f"[hint]{elapsed:.2f}s[/hint]",
                     subtitle_align="right",
@@ -844,6 +869,7 @@ def _action_info(config: Config) -> None:
     cfg_table.add_row("anthropic key", _key_state(config.anthropic_api_key))
     cfg_table.add_row("ollama key", _key_state(config.ollama_api_key))
     cfg_table.add_row("gemini key", _key_state(config.gemini_api_key))
+    cfg_table.add_row("github key", _key_state(config.github_models_token))
 
     console.print()
     console.print(
@@ -1002,6 +1028,12 @@ _KEY_PROMPTS = {
         gemini.looks_like_gemini_key,
         "the key does not start with 'AIza' like AI Studio keys usually do",
     ),
+    "github_models": (
+        "GitHub token for GitHub Models",
+        "https://github.com/settings/personal-access-tokens",
+        github_models.looks_like_github_token,
+        "the token does not look like a GitHub PAT/token",
+    ),
 }
 
 
@@ -1034,6 +1066,8 @@ def _set_api_key(config: Config, provider: str, *, intro: bool) -> bool:
         config.ollama_api_key = cleaned
     elif provider == "gemini":
         config.gemini_api_key = cleaned
+    elif provider == "github_models":
+        config.github_models_token = cleaned
     else:
         config.anthropic_api_key = cleaned
     cfg_mod.save(config)

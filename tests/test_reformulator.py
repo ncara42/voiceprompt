@@ -43,9 +43,19 @@ class ReformulatorDispatchTests(unittest.TestCase):
             self.assertEqual(reformulator.reformulate_text("hi", cfg), "G")
         m.assert_called_once_with("hi", cfg)
 
+    def test_reformulate_dispatches_to_github_models(self) -> None:
+        cfg = Config(provider="github_models", github_models_token="github_pat_x")
+        with patch("voiceprompt.github_models.reformulate_text", return_value="GH") as m:
+            self.assertEqual(reformulator.reformulate_text("hi", cfg), "GH")
+        m.assert_called_once_with("hi", cfg)
+
     def test_short_model_for_gemini_uses_gemini_model(self) -> None:
         cfg = Config(provider="gemini", gemini_model="gemini-2.5-flash")
         self.assertEqual(reformulator.short_model(cfg), "gemini-2.5-flash")
+
+    def test_short_model_for_github_models_strips_publisher(self) -> None:
+        cfg = Config(provider="github_models", github_models_model="openai/gpt-5-mini")
+        self.assertEqual(reformulator.short_model(cfg), "gpt-5-mini")
 
 
 class ConfigProviderTests(unittest.TestCase):
@@ -64,6 +74,19 @@ class ConfigProviderTests(unittest.TestCase):
 
         cfg = Config(provider="gemini", anthropic_api_key="sk-ant-x", gemini_api_key="")
         self.assertFalse(cfg.is_configured)
+
+        cfg = Config(provider="github_models", github_models_token="github_pat_x")
+        self.assertTrue(cfg.is_configured)
+
+        cfg = Config(
+            provider="github_models",
+            anthropic_api_key="sk-ant-x",
+            github_models_token="",
+        )
+        self.assertFalse(cfg.is_configured)
+
+    def test_github_provider_alias_normalizes_to_github_models(self) -> None:
+        self.assertEqual(reformulator.normalize("github"), "github_models")
 
 
 if __name__ == "__main__":

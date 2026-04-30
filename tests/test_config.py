@@ -51,6 +51,34 @@ class ConfigLoadTests(unittest.TestCase):
 
         self.assertEqual(loaded.transcription_model, config.DEFAULT_TRANSCRIPTION_MODEL)
 
+    def test_load_prefills_github_models_token_from_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+
+            with (
+                patch.object(config, "config_path", return_value=path),
+                patch.dict("os.environ", {"GITHUB_MODELS_TOKEN": "github_pat_env"}, clear=True),
+            ):
+                loaded = config.load()
+
+        self.assertEqual(loaded.github_models_token, "github_pat_env")
+
+    def test_load_accepts_github_models_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"provider": "github_models"}),
+                encoding="utf-8",
+            )
+
+            with patch.object(config, "config_path", return_value=path):
+                loaded = config.load()
+
+        self.assertEqual(loaded.provider, "github_models")
+
+    def test_default_github_models_model_prioritizes_fast_stable_model(self) -> None:
+        self.assertEqual(config.Config().github_models_model, "openai/gpt-4o-mini")
+
 
 if __name__ == "__main__":
     unittest.main()

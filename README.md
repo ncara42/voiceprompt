@@ -45,7 +45,7 @@ Press a global hotkey from any app, dictate a thought, release. **voiceprompt**:
 
 1. records the audio,
 2. transcribes it locally with **NVIDIA Parakeet** (no audio leaves your machine),
-3. rewrites the transcript into a clean prompt with **Claude**, **Ollama Cloud**, or **Google Gemini**,
+3. rewrites the transcript into a clean prompt with **Claude**, **Ollama Cloud**, **Google Gemini**, or **GitHub Models**,
 4. pastes the result into whichever window had focus when you stopped recording — Claude Code, Gemini CLI, OpenCode, Codex, an editor, your browser, anything.
 
 It is built for people who already have a coding agent open all day and want to talk to it instead of typing.
@@ -54,7 +54,7 @@ It is built for people who already have a coding agent open all day and want to 
 
 ## Highlights
 
-- **Three AI providers, swap any time** — Anthropic Claude (paid, best quality), Ollama Cloud (free tier with `gpt-oss` / `qwen3-coder`), Google Gemini (generous free tier on `gemini-2.5-flash`).
+- **Four AI providers, swap any time** — Anthropic Claude (paid, best quality), Ollama Cloud (free tier with `gpt-oss` / `qwen3-coder`), Google Gemini (generous free tier on `gemini-2.5-flash`), and GitHub Models for Copilot/GitHub ecosystem users.
 - **Local speech-to-text** — Parakeet-TDT-0.6B-v3 runs on your Mac via MLX. Your voice never hits the cloud.
 - **One global hotkey** — `voiceprompt listen` runs in the background. Toggle recording from any app with `ctrl+space` (configurable).
 - **Pastes into whichever window has focus** — the daemon never steals focus, so the prompt lands wherever you were already typing. Works for any terminal-based agent CLI, editor, or chat box without configuration.
@@ -69,7 +69,7 @@ It is built for people who already have a coding agent open all day and want to 
 | --------------- | ------------------------------------------------------------------------------ |
 | **macOS**       | Apple Silicon (M-series). Parakeet runs on MLX.                                |
 | **Python**      | 3.10 or newer.                                                                 |
-| **AI provider** | One API key from Anthropic, Ollama Cloud, or Google AI Studio (free tiers OK). |
+| **AI provider** | One API key/token from Anthropic, Ollama Cloud, Google AI Studio, or GitHub Models (free tiers OK where available). |
 | **Disk**        | ~1.2 GB for the default Parakeet model (one-time download).                    |
 
 Linux/Windows: most of the pipeline still works (recording, providers, paste), but the transcription step requires Apple Silicon today. Ports welcome.
@@ -106,13 +106,13 @@ voiceprompt
 
 The first run shows **Set up voiceprompt**, a guided three-step wizard:
 
-1. Pick a provider (Claude / Ollama Cloud / Gemini).
+1. Pick a provider (Claude / Ollama Cloud / Gemini / GitHub Models).
 2. Paste your API key — it's prompted via hidden stdin.
 3. Optionally ping the provider to verify the connection.
 
 Then pick **Listen for hotkey** and you're ready: press `ctrl+space` from any app to dictate.
 
-> **Get a key:** [Anthropic](https://console.anthropic.com/settings/keys) · [Ollama](https://ollama.com/settings/keys) · [Google AI Studio](https://aistudio.google.com/apikey)
+> **Get a key:** [Anthropic](https://console.anthropic.com/settings/keys) · [Ollama](https://ollama.com/settings/keys) · [Google AI Studio](https://aistudio.google.com/apikey) · [GitHub token](https://github.com/settings/personal-access-tokens) with `models: read`
 
 ---
 
@@ -155,11 +155,12 @@ The menu also exposes the daemon, a one-shot dictation, settings, and help scree
 
 ## Providers
 
-| Provider        | Default model            | Cost                            | Notes                                                          |
-| --------------- | ------------------------ | ------------------------------- | -------------------------------------------------------------- |
-| Anthropic Claude| `claude-haiku-4-5`       | paid                            | Best quality. `sonnet-4-6` and `opus-4-7` available.           |
-| Ollama Cloud    | `gpt-oss:120b`           | free tier · paid extras         | Open-weight models including `gpt-oss:20b`, `qwen3-coder:480b`.|
-| Google Gemini   | `gemini-2.5-flash`       | free tier · 15 RPM, 1500 RPD    | Closest free analog to Haiku. `gemini-2.5-pro` for better quality.|
+| Provider         | Default model          | Cost                            | Notes                                                          |
+| ---------------- | ---------------------- | ------------------------------- | -------------------------------------------------------------- |
+| Anthropic Claude | `claude-haiku-4-5`     | paid                            | Best quality. `sonnet-4-6` and `opus-4-7` available.           |
+| Ollama Cloud     | `gpt-oss:120b`         | free tier · paid extras         | Open-weight models including `gpt-oss:20b`, `qwen3-coder:480b`.|
+| Google Gemini    | `gemini-2.5-flash`     | free tier · 15 RPM, 1500 RPD    | Closest free analog to Haiku. `gemini-2.5-pro` for better quality.|
+| GitHub Models    | `openai/gpt-4o-mini`   | GitHub Models / Copilot billing | Uses a GitHub token with `models: read`; `gpt-5-mini` is available but stricter. |
 
 Switch providers from **Settings → AI provider**. Switching is instant — pick a model and a key per provider, voiceprompt remembers each.
 
@@ -223,8 +224,8 @@ Editable from **Settings** in the menu, or directly with your editor.
 
 ```
    ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌────────────┐
-   │  microphone  │ → │  Parakeet (MLX)  │ → │  Claude / Ollama │ → │   paste    │
-   │  16 kHz mono │   │  local, on-device│   │   Cloud / Gemini │   │  ⌘V / ^V   │
+   │  microphone  │ → │  Parakeet (MLX)  │ → │ Claude / Ollama  │ → │   paste    │
+   │  16 kHz mono │   │  local, on-device│   │ Gemini / GitHub │   │  ⌘V / ^V   │
    └──────────────┘   └──────────────────┘   └──────────────────┘   └────────────┘
                                                        ↑
                                               system prompt
@@ -242,7 +243,7 @@ Editable from **Settings** in the menu, or directly with your editor.
 
 - **Audio never leaves your machine.** Transcription is 100% local; the WAV file is unlinked immediately after.
 - **Only the transcript is sent to the AI provider.**
-- **API keys** are stored locally with `0600` permissions, written atomically. They never appear in logs or error messages — there are explicit redaction patterns for `sk-ant-*`, `Bearer …`, and `AIza*` tokens.
+- **API keys** are stored locally with `0600` permissions, written atomically. They never appear in logs or error messages — there are explicit redaction patterns for `sk-ant-*`, `Bearer …`, `AIza*`, and GitHub `github_pat_*` / `ghp_*` tokens.
 - **No telemetry.** No analytics, no remote calls beyond the chosen AI provider.
 - **No-paste mode** (`--no-paste`) skips automation entirely if you'd rather paste manually.
 
@@ -257,6 +258,7 @@ Found a security issue? See [`SECURITY.md`](SECURITY.md).
 | `ANTHROPIC_API_KEY`            | Pre-fills the Claude key on first config load.                        |
 | `OLLAMA_API_KEY`               | Pre-fills the Ollama Cloud key on first config load.                  |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Pre-fills the Gemini key on first config load.                   |
+| `GITHUB_MODELS_TOKEN` / `GITHUB_TOKEN` | Pre-fills the GitHub Models token on first config load.         |
 | `HF_TOKEN`                     | Hugging Face token for higher download rate limits.                   |
 | `HF_HUB_ENABLE_HF_TRANSFER=0`  | Disables the Rust parallel downloader (enabled by default).           |
 

@@ -27,10 +27,11 @@ LEGACY_DEFAULT_SYSTEM_PROMPT_SHA256 = (
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OLLAMA_MODEL = "gpt-oss:120b"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GITHUB_MODELS_MODEL = "openai/gpt-4o-mini"
 DEFAULT_PROVIDER = "claude"
 DEFAULT_TRANSCRIPTION_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
 
-VALID_PROVIDERS = ("claude", "ollama", "gemini")
+VALID_PROVIDERS = ("claude", "ollama", "gemini", "github_models")
 
 
 @dataclass
@@ -38,10 +39,12 @@ class Config:
     anthropic_api_key: str = ""
     ollama_api_key: str = ""
     gemini_api_key: str = ""
-    provider: str = DEFAULT_PROVIDER  # 'claude' | 'ollama' | 'gemini'
+    github_models_token: str = ""
+    provider: str = DEFAULT_PROVIDER  # 'claude' | 'ollama' | 'gemini' | 'github_models'
     model: str = DEFAULT_MODEL
     ollama_model: str = DEFAULT_OLLAMA_MODEL
     gemini_model: str = DEFAULT_GEMINI_MODEL
+    github_models_model: str = DEFAULT_GITHUB_MODELS_MODEL
     transcription_model: str = DEFAULT_TRANSCRIPTION_MODEL
     language: str = "auto"  # 'auto' | 'es' | 'en' | ...
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
@@ -57,6 +60,8 @@ class Config:
             return bool(self.ollama_api_key.strip())
         if self.provider == "gemini":
             return bool(self.gemini_api_key.strip())
+        if self.provider == "github_models":
+            return bool(self.github_models_token.strip())
         return bool(self.anthropic_api_key.strip())
 
     @property
@@ -65,6 +70,8 @@ class Config:
             return self.ollama_api_key.strip()
         if self.provider == "gemini":
             return self.gemini_api_key.strip()
+        if self.provider == "github_models":
+            return self.github_models_token.strip()
         return self.anthropic_api_key.strip()
 
 
@@ -124,6 +131,13 @@ def load() -> Config:
     )
     if env_gemini and not data.get("gemini_api_key"):
         data["gemini_api_key"] = env_gemini
+
+    env_github_models = (
+        os.environ.get("GITHUB_MODELS_TOKEN", "").strip()
+        or os.environ.get("GITHUB_TOKEN", "").strip()
+    )
+    if env_github_models and not data.get("github_models_token"):
+        data["github_models_token"] = env_github_models
 
     # Drop any unknown provider value so we always boot to a valid one.
     if data.get("provider") not in VALID_PROVIDERS:

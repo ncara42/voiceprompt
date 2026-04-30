@@ -2,7 +2,7 @@
 
 Routes ``reformulate_text`` and ``quick_test`` calls to the active provider
 selected by ``Config.provider``. Currently supported: Anthropic Claude, Ollama
-Cloud, and Google Gemini. Errors raised by every provider derive from
+Cloud, Google Gemini, and GitHub Models. Errors raised by every provider derive from
 ``ProviderError`` so callers can handle them uniformly.
 """
 
@@ -27,18 +27,23 @@ class QuotaExceededError(ProviderError):
         self.retry_after = retry_after
 
 
-PROVIDERS = ("claude", "ollama", "gemini")
+PROVIDERS = ("claude", "ollama", "gemini", "github_models")
 DEFAULT_PROVIDER = "claude"
+PROVIDER_ALIASES = {
+    "github": "github_models",
+}
 
 PROVIDER_LABELS = {
     "claude": "Claude (Anthropic)",
     "ollama": "Ollama Cloud",
     "gemini": "Google Gemini",
+    "github_models": "GitHub Models",
 }
 
 
 def normalize(provider: str) -> str:
-    return provider if provider in PROVIDERS else DEFAULT_PROVIDER
+    normalized = PROVIDER_ALIASES.get(provider, provider)
+    return normalized if normalized in PROVIDERS else DEFAULT_PROVIDER
 
 
 def active_provider(cfg: Config) -> str:
@@ -51,6 +56,8 @@ def active_model(cfg: Config) -> str:
         return cfg.ollama_model
     if p == "gemini":
         return cfg.gemini_model
+    if p == "github_models":
+        return cfg.github_models_model
     return cfg.model
 
 
@@ -61,6 +68,8 @@ def short_model(cfg: Config) -> str:
         return cfg.ollama_model
     if p == "gemini":
         return cfg.gemini_model
+    if p == "github_models":
+        return _short_github_model(cfg.github_models_model)
     return _short_claude(cfg.model)
 
 
@@ -74,6 +83,11 @@ def _short_claude(model_id: str) -> str:
     return model_id
 
 
+def _short_github_model(model_id: str) -> str:
+    """``openai/gpt-5-mini`` -> ``gpt-5-mini``; fallback to the raw id."""
+    return model_id.split("/", 1)[1] if "/" in model_id else model_id
+
+
 def reformulate_text(transcript: str, cfg: Config) -> str:
     p = active_provider(cfg)
     if p == "ollama":
@@ -84,6 +98,10 @@ def reformulate_text(transcript: str, cfg: Config) -> str:
         from voiceprompt import gemini as gemini_mod  # noqa: PLC0415
 
         return gemini_mod.reformulate_text(transcript, cfg)
+    if p == "github_models":
+        from voiceprompt import github_models as github_models_mod  # noqa: PLC0415
+
+        return github_models_mod.reformulate_text(transcript, cfg)
     from voiceprompt import claude as claude_mod  # noqa: PLC0415
 
     return claude_mod.reformulate_text(transcript, cfg)
@@ -99,6 +117,10 @@ def quick_test(cfg: Config) -> str:
         from voiceprompt import gemini as gemini_mod  # noqa: PLC0415
 
         return gemini_mod.quick_test(cfg)
+    if p == "github_models":
+        from voiceprompt import github_models as github_models_mod  # noqa: PLC0415
+
+        return github_models_mod.quick_test(cfg)
     from voiceprompt import claude as claude_mod  # noqa: PLC0415
 
     return claude_mod.quick_test(cfg)

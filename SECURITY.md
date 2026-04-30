@@ -15,11 +15,12 @@ on a private branch and disclosed in the changelog after a coordinated release.
 
 Issues considered in scope:
 
-- Anything that could leak the user's API key (Anthropic, Hugging Face).
+- Anything that could leak the user's API key/token (Anthropic, Ollama, Gemini,
+  GitHub Models, Hugging Face).
 - Command/script injection through CLI flags or config values
   (especially the AppleScript / xdotool / wmctrl backends in `inject.py`).
-- Audio data leaving the machine through any path other than the explicit Claude
-  text reformulation request.
+- Audio data leaving the machine through any path other than local
+  transcription.
 - Privilege escalation or escape from the sandboxed config / temp directories.
 
 Out of scope:
@@ -33,10 +34,11 @@ Out of scope:
 ## What we already do
 
 - API key stored locally with `0o600` permissions, written atomically.
-- Error messages from the Anthropic SDK are redacted to strip anything that
-  matches `sk-ant-*`, bearer tokens, or `x-api-key` headers before being shown.
+- Error messages from provider clients are redacted to strip anything that
+  matches `sk-ant-*`, `AIza*`, GitHub `github_pat_*` / `ghp_*`, bearer tokens,
+  or API-key headers before being shown.
 - AppleScript invocations pass user-controlled strings as `osascript` `on run argv`
   arguments, never interpolated into the script source.
-- Audio is transcribed locally (Whisper) and never uploaded anywhere by us.
+- Audio is transcribed locally (Parakeet) and never uploaded anywhere by us.
 - Recorded WAVs live only in the OS temp directory and are deleted as soon as the
   reformulation finishes (or the dictation is cancelled).

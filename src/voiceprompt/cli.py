@@ -19,7 +19,7 @@ from voiceprompt.styles import console  # noqa: E402
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
-    help="Speak. Claude refines. Paste: record, refine, and copy prompts.",
+    help="Speak. AI refines. Paste: record, refine, and copy prompts.",
 )
 
 
@@ -57,12 +57,16 @@ def set_key(
         None,
         "--provider",
         "-p",
-        help="Provider to set the key for: 'claude', 'ollama', or 'gemini'. Defaults to the active provider.",
+        help=(
+            "Provider to set the key for: 'claude', 'ollama', 'gemini', or "
+            "'github_models'. Defaults to the active provider."
+        ),
     ),
 ) -> None:
     """Save the API key for a provider without opening the interactive menu."""
     from voiceprompt import claude as claude_mod  # noqa: PLC0415
     from voiceprompt import gemini as gemini_mod  # noqa: PLC0415
+    from voiceprompt import github_models as github_models_mod  # noqa: PLC0415
     from voiceprompt import ollama as ollama_mod  # noqa: PLC0415
     from voiceprompt import reformulator as ref  # noqa: PLC0415
     from voiceprompt import select as sel  # noqa: PLC0415
@@ -96,6 +100,13 @@ def set_key(
                 "keys usually do. I will save it anyway; if it fails, paste it again."
             )
         config.gemini_api_key = api_key
+    elif target == "github_models":
+        if not github_models_mod.looks_like_github_token(api_key):
+            console.print(
+                "[warn]Warning:[/warn] the token does not look like a GitHub PAT/token. "
+                "I will save it anyway; if it fails, paste it again."
+            )
+        config.github_models_token = api_key
     else:
         if not claude_mod.looks_like_anthropic_key(api_key):
             console.print(
@@ -120,15 +131,18 @@ def show_config() -> None:
     console.print(f"[label]Claude model:[/label] [value]{config.model}[/value]")
     console.print(f"[label]Ollama model:[/label] [value]{config.ollama_model}[/value]")
     console.print(f"[label]Gemini model:[/label] [value]{config.gemini_model}[/value]")
+    console.print(f"[label]GitHub Models model:[/label] [value]{config.github_models_model}[/value]")
     console.print(f"[label]Transcription model:[/label] [value]{config.transcription_model}[/value]")
     console.print(f"[label]Language:[/label] [value]{config.language}[/value]")
     console.print(f"[label]Sample rate:[/label] [value]{config.sample_rate} Hz[/value]")
     anthropic_state = "configured" if config.anthropic_api_key.strip() else "—"
     ollama_state = "configured" if config.ollama_api_key.strip() else "—"
     gemini_state = "configured" if config.gemini_api_key.strip() else "—"
+    github_state = "configured" if config.github_models_token.strip() else "—"
     console.print(f"[label]Anthropic key:[/label] [value]{anthropic_state}[/value]")
     console.print(f"[label]Ollama key:[/label] [value]{ollama_state}[/value]")
     console.print(f"[label]Gemini key:[/label] [value]{gemini_state}[/value]")
+    console.print(f"[label]GitHub token:[/label] [value]{github_state}[/value]")
 
 
 @app.command("dictate")
