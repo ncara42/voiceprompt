@@ -340,5 +340,3 @@ PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 [MIT](LICENSE) © Noel Caravaca.
-
-The original Swift/macOS prototype is preserved in [`legacy/swift-macos/`](legacy/swift-macos/) for historical reference. The current codebase is pure Python.
