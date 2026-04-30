@@ -18,6 +18,7 @@ macOS), otherwise the menu bar latches the original "Python" name.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 
 DEFAULT_NAME = "voiceprompt"
@@ -50,10 +51,8 @@ def apply(name: str = DEFAULT_NAME) -> None:
                 NSProcessInfo,
             )
 
-            try:
+            with contextlib.suppress(Exception):
                 NSProcessInfo.processInfo().setProcessName_(name)
-            except Exception:  # noqa: BLE001
-                pass
 
             bundle = NSBundle.mainBundle()
             info = bundle.localizedInfoDictionary() or bundle.infoDictionary()

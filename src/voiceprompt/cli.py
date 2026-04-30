@@ -11,9 +11,8 @@ proctitle.apply()
 
 import typer  # noqa: E402
 
-from voiceprompt import __version__, inject  # noqa: E402
+from voiceprompt import __version__  # noqa: E402
 from voiceprompt import config as cfg_mod  # noqa: E402
-from voiceprompt import select as sel  # noqa: E402
 from voiceprompt.menu import run_menu  # noqa: E402
 from voiceprompt.styles import console  # noqa: E402
 

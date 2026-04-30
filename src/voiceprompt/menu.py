@@ -187,8 +187,7 @@ def _action_settings(config: Config) -> None:
             sel.Choice(
                 "Model",
                 "transcription",
-                hint=_short_transcription_model(config.transcription_model)
-                + (" · cached" if transcriber.is_model_on_disk(config.transcription_model) else " · not downloaded"),
+                hint=_transcription_model_hint(config.transcription_model),
             ),
             sel.Choice("Language", "language", hint=config.language),
 
@@ -511,7 +510,9 @@ def _action_test(config: Config, *, pause_after: bool = True) -> None:
                 )
             )
         except reformulator.AuthError as e:
-            console.print(_error_panel("Authentication failed", str(e), hint="Check the API key in Settings."))
+            console.print(
+                _error_panel("Authentication failed", str(e), hint="Check the API key in Settings.")
+            )
         except reformulator.QuotaExceededError as e:
             hint = (
                 f"Wait ~{e.retry_after:.0f}s or switch models in Settings."
@@ -878,8 +879,17 @@ def _action_info(config: Config) -> None:
     cfg_table.add_row("gemini key", _key_state(config.gemini_api_key))
 
     console.print()
-    console.print(Panel(sys_table, border_style="hint", title="[accent2]system[/accent2]", title_align="left"))
-    console.print(Panel(cfg_table, border_style="hint", title="[accent2]configuration[/accent2]", title_align="left"))
+    console.print(
+        Panel(sys_table, border_style="hint", title="[accent2]system[/accent2]", title_align="left")
+    )
+    console.print(
+        Panel(
+            cfg_table,
+            border_style="hint",
+            title="[accent2]configuration[/accent2]",
+            title_align="left",
+        )
+    )
 
     try:
         devs = recorder.list_input_devices()
@@ -892,7 +902,14 @@ def _action_info(config: Config) -> None:
             for d in devs:
                 marker = "›" if d["default"] else " "
                 dev_table.add_row(marker, str(d["index"]), d["name"], f"{d['channels']}ch")
-            console.print(Panel(dev_table, border_style="hint", title="[accent2]microphones[/accent2]", title_align="left"))
+            console.print(
+                Panel(
+                    dev_table,
+                    border_style="hint",
+                    title="[accent2]microphones[/accent2]",
+                    title_align="left",
+                )
+            )
     except Exception as e:  # noqa: BLE001
         console.print(f"  [warn]Could not list devices: {e}[/warn]")
 
@@ -1098,6 +1115,11 @@ def _ensure_transcription_model_downloaded(model_name: str, *, ask_confirm: bool
 
 def _short_transcription_model(model_id: str) -> str:
     return model_id.split("/", 1)[1] if "/" in model_id else model_id
+
+
+def _transcription_model_hint(model_id: str) -> str:
+    state = "cached" if transcriber.is_model_on_disk(model_id) else "not downloaded"
+    return f"{_short_transcription_model(model_id)} · {state}"
 
 
 def _peak_bar(peak: int, width: int = 16) -> str:

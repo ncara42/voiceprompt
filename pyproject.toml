@@ -36,7 +36,9 @@ dependencies = [
     "anthropic>=0.39",
     "ollama>=0.4",
     "google-genai>=1.0",
-    "parakeet-mlx>=0.3",
+    # Apple Silicon only — parakeet-mlx pulls in `mlx` which has no Linux/Windows wheels.
+    # The transcription module imports it lazily and falls back to a clear error.
+    "parakeet-mlx>=0.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "huggingface-hub>=0.24",
     "hf-transfer>=0.1.6",
     "pynput>=1.7.6",
