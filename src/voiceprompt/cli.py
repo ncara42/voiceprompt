@@ -151,15 +151,192 @@ def show_config() -> None:
 
 
 @app.command("dictate")
-def dictate_oneshot() -> None:
+def dictate_oneshot(
+    stdout: bool = typer.Option(
+        False,
+        "--stdout",
+        help=(
+            "Headless mode: print only the refined prompt to stdout (no TUI, no "
+            "clipboard, no paste). Diagnostics go to stderr. Stops on Enter when "
+            "stdin is a TTY, otherwise after --max-seconds. Designed for piping "
+            "into editors, plugins, and scripts."
+        ),
+    ),
+    max_seconds: int = typer.Option(
+        60,
+        "--max-seconds",
+        help="Hard cap on recording duration. Always enforced in --stdout mode.",
+    ),
+) -> None:
     """Shortcut: one dictation session and exit (does not open the menu)."""
-    from voiceprompt.menu import _action_dictate  # noqa: PLC0415
-
     config = cfg_mod.load()
     if not config.is_configured:
-        console.print("[err]Missing API key.[/err] Run [value]voiceprompt set-key <KEY>[/value]")
+        message = "Missing API key. Run `voiceprompt set-key <KEY>`."
+        if stdout:
+            import sys  # noqa: PLC0415
+
+            print(f"voiceprompt: {message}", file=sys.stderr)
+        else:
+            console.print(f"[err]{message}[/err]")
         raise typer.Exit(code=1)
+
+    if stdout:
+        _dictate_headless(config, max_seconds=max_seconds)
+        return
+
+    from voiceprompt.menu import _action_dictate  # noqa: PLC0415
+
     _action_dictate(config)
+
+
+def _dictate_headless(config, *, max_seconds: int) -> None:
+    """Record → transcribe → refine → print prompt to stdout. No TUI, no side effects.
+
+    Stops when:
+      * the user presses Enter (only if stdin is a TTY),
+      * SIGINT is received (cancels the cycle, no output),
+      * ``max_seconds`` elapses (always enforced).
+
+    Exit codes:
+      0  success — the refined prompt was printed to stdout
+      1  configuration / generic failure
+      2  transcription model not present on disk
+      3  microphone unavailable
+      4  silent or empty audio
+      5  STT failure
+      6  AI provider failure
+      130 cancelled by SIGINT
+    """
+    import contextlib  # noqa: PLC0415
+    import select  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    from voiceprompt import history as hist  # noqa: PLC0415
+    from voiceprompt import recorder as rec_mod  # noqa: PLC0415
+    from voiceprompt import reformulator as ref  # noqa: PLC0415
+    from voiceprompt import transcriber as tr  # noqa: PLC0415
+
+    def _err(msg: str) -> None:
+        print(f"voiceprompt: {msg}", file=sys.stderr, flush=True)
+
+    if not tr.is_model_on_disk(config.transcription_model):
+        _err(
+            f"transcription model '{config.transcription_model}' is not on disk. "
+            f"Run `voiceprompt dictate` once interactively to download it."
+        )
+        raise typer.Exit(code=2)
+
+    rec = rec_mod.Recorder(sample_rate=config.sample_rate)
+    try:
+        rec.start()
+    except rec_mod.NoInputDeviceError:
+        _err("no audio input device found.")
+        raise typer.Exit(code=3) from None
+    except Exception as e:  # noqa: BLE001
+        _err(f"could not start recorder: {e}")
+        raise typer.Exit(code=3) from None
+
+    interactive = sys.stdin.isatty()
+    if interactive:
+        _err("recording — press Enter to stop, Ctrl+C to cancel.")
+    else:
+        _err(f"recording — auto-stop in {max_seconds}s (Ctrl+C to cancel).")
+
+    started = time.monotonic()
+    cancelled = False
+    try:
+        while True:
+            if time.monotonic() - started >= max_seconds:
+                _err(f"max duration reached ({max_seconds}s), stopping.")
+                break
+            if interactive:
+                ready, _, _ = select.select([sys.stdin], [], [], 0.2)
+                if ready:
+                    sys.stdin.readline()
+                    break
+            else:
+                time.sleep(0.2)
+    except KeyboardInterrupt:
+        cancelled = True
+
+    record_secs = time.monotonic() - started
+    result = rec.stop()
+
+    if cancelled:
+        if result is not None:
+            with contextlib.suppress(OSError):
+                result[0].unlink(missing_ok=True)
+        _err("cancelled.")
+        raise typer.Exit(code=130)
+    if result is None:
+        _err("recording too short.")
+        raise typer.Exit(code=4)
+
+    wav_path, _duration, peak = result
+    if peak < 50:
+        with contextlib.suppress(OSError):
+            wav_path.unlink(missing_ok=True)
+        _err(
+            f"silent audio (peak={peak}). "
+            "Check microphone permissions or that the device is unmuted."
+        )
+        raise typer.Exit(code=4)
+
+    _err("transcribing…")
+    try:
+        transcript = tr.transcribe(
+            wav_path,
+            model_name=config.transcription_model,
+            language=config.language,
+        )
+    except (tr.TranscriptionError, tr.ModelDownloadError) as e:
+        with contextlib.suppress(OSError):
+            wav_path.unlink(missing_ok=True)
+        _err(f"transcription failed: {e}")
+        raise typer.Exit(code=5) from None
+
+    if not transcript or not transcript.strip():
+        with contextlib.suppress(OSError):
+            wav_path.unlink(missing_ok=True)
+        _err("no speech detected.")
+        raise typer.Exit(code=4)
+
+    _err("refining…")
+    refine_started = time.monotonic()
+    try:
+        prompt = ref.reformulate_text(transcript, config)
+    except ref.ProviderError as e:
+        with contextlib.suppress(OSError):
+            wav_path.unlink(missing_ok=True)
+        _err(f"provider error: {e}")
+        raise typer.Exit(code=6) from None
+    refine_secs = time.monotonic() - refine_started
+
+    with contextlib.suppress(OSError):
+        wav_path.unlink(missing_ok=True)
+
+    if not prompt or not prompt.strip():
+        _err("empty response from AI provider.")
+        raise typer.Exit(code=6)
+
+    if config.history_enabled:
+        hist.log(
+            transcript=transcript,
+            prompt=prompt,
+            provider=ref.active_provider(config),
+            model=ref.active_model(config),
+            language=config.language,
+            record_secs=record_secs,
+            refine_secs=refine_secs,
+            max_entries=config.history_max_entries,
+        )
+
+    # The whole point: only the prompt goes to stdout.
+    sys.stdout.write(prompt)
+    if not prompt.endswith("\n"):
+        sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 @app.command("history")
