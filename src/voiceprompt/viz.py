@@ -166,28 +166,3 @@ def record_visual(
         if hotkey_ctx is not None:
             hotkey_ctx.clear_running_app()
     return bool(result) and not state["cancelled"]
-
-
-def record_headless(rec: Recorder, *, hotkey_ctx: HotkeyContext, max_seconds: float = 600.0) -> bool:
-    """Record without a TUI; stop when the global hotkey fires again.
-
-    Used by the listen daemon when it's been started detached from a
-    terminal (``voiceprompt start``). prompt_toolkit's input layer cannot
-    attach to ``/dev/null``, so the visualizer cannot run in that mode.
-
-    Returns True when the user toggled stop (committed), False when the
-    safety cap fired without a stop (still committed — the recording
-    should be processed). Currently this function does not support
-    cancellation; use ``voiceprompt stop`` to end the daemon entirely if
-    something gets stuck.
-    """
-    hotkey_ctx.stop_event.clear()
-    hotkey_ctx.set_headless_recording(True)
-    try:
-        # The recorder does its own work in a background thread — we just
-        # block until the hotkey thread sets the stop event, with a long
-        # safety cap so a missed second press can never wedge the daemon.
-        return hotkey_ctx.stop_event.wait(timeout=max_seconds)
-    finally:
-        hotkey_ctx.set_headless_recording(False)
-        hotkey_ctx.stop_event.clear()
