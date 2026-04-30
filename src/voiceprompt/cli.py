@@ -35,53 +35,15 @@ def root(
     version: bool | None = typer.Option(
         None, "--version", "-V", callback=_version_callback, is_eager=True, help="Show version."
     ),
-    menu: bool = typer.Option(
-        False,
-        "--menu",
-        "-m",
-        help="Open the interactive menu instead of auto-starting the daemon.",
-    ),
 ) -> None:
-    """Default action: start the listen daemon in the background.
-
-    When voiceprompt is fully configured, running `voiceprompt` with no
-    subcommand spawns the global-hotkey daemon and returns to the shell
-    immediately — press the hotkey from any window to dictate. If the
-    daemon is already running, prints its status and exits cleanly.
-
-    If the user has not yet configured an API key, falls back to the
-    interactive setup wizard. Pass --menu to open the menu explicitly.
-    """
+    """Launch the interactive menu when no subcommand is provided."""
     if ctx.invoked_subcommand is not None:
         return
-
     config = cfg_mod.load()
-
-    if menu or not config.is_configured:
-        try:
-            run_menu(config)
-        except KeyboardInterrupt:
-            console.print("\n  [hint]Interrupted.[/hint]\n")
-        return
-
-    # Configured: behave like `voiceprompt start` but idempotent.
-    pid = _read_daemon_pid(_daemon_pid_path())
-    if pid is not None and _process_alive(pid):
-        log_path = _daemon_log_path()
-        console.print(
-            f"  [ok]daemon: running[/ok] [hint](pid {pid})[/hint]\n"
-            f"  Hotkey:  [accent2]{config.hotkey}[/accent2]\n"
-            f"  Log:     [hint]{log_path}[/hint]\n"
-            f"  [hint]voiceprompt --menu[/hint] to open settings, "
-            f"[hint]voiceprompt stop[/hint] to stop."
-        )
-        return
-
-    _start_daemon_background(config, hotkey=None, no_paste=False)
-    console.print(
-        "  [hint]Press the hotkey from any window to dictate. "
-        "Run [/hint][value]voiceprompt stop[/value][hint] when done.[/hint]"
-    )
+    try:
+        run_menu(config)
+    except KeyboardInterrupt:
+        console.print("\n  [hint]Interrupted.[/hint]\n")
 
 
 @app.command("set-key")
@@ -505,41 +467,29 @@ def start_cmd(
     its output to a rotating log file. Press the hotkey from any window to
     dictate, then run `voiceprompt stop` when done.
     """
-    config = cfg_mod.load()
-    if not config.is_configured:
-        console.print("[err]Missing API key.[/err] Run [value]voiceprompt set-key <KEY>[/value]")
-        raise typer.Exit(code=1)
-
-    existing = _read_daemon_pid(_daemon_pid_path())
-    if existing is not None and _process_alive(existing):
-        console.print(
-            f"  [warn]daemon already running[/warn] [hint](pid {existing})[/hint]\n"
-            f"  Stop it first with [value]voiceprompt stop[/value]."
-        )
-        raise typer.Exit(code=1)
-
-    _start_daemon_background(config, hotkey=hotkey, no_paste=no_paste)
-
-
-def _start_daemon_background(config, *, hotkey: str | None, no_paste: bool) -> None:
-    """Spawn `voiceprompt listen` as a detached background process.
-
-    Writes the pid file, redirects stdout/stderr to ``daemon.log``, and prints
-    a short status message. Cleans up stale pid files left by a previous crash.
-    Raises ``typer.Exit`` on failure.
-    """
     import contextlib  # noqa: PLC0415
     import os  # noqa: PLC0415
     import subprocess  # noqa: PLC0415
     import sys  # noqa: PLC0415
     import time  # noqa: PLC0415
 
+    config = cfg_mod.load()
+    if not config.is_configured:
+        console.print("[err]Missing API key.[/err] Run [value]voiceprompt set-key <KEY>[/value]")
+        raise typer.Exit(code=1)
+
     pid_path = _daemon_pid_path()
     log_path = _daemon_log_path()
 
-    # If a pid file exists but the process is dead, drop it before starting.
     existing = _read_daemon_pid(pid_path)
-    if existing is not None and not _process_alive(existing):
+    if existing is not None and _process_alive(existing):
+        console.print(
+            f"  [warn]daemon already running[/warn] [hint](pid {existing})[/hint]\n"
+            f"  Stop it first with [value]voiceprompt stop[/value]."
+        )
+        raise typer.Exit(code=1)
+    if existing is not None:
+        # Stale pid file from a crashed run.
         with contextlib.suppress(OSError):
             pid_path.unlink()
 
@@ -579,9 +529,11 @@ def _start_daemon_background(config, *, hotkey: str | None, no_paste: bool) -> N
                 close_fds=True,
             )
     finally:
+        # The child has its own dup of the fd; we can drop our reference.
         with contextlib.suppress(OSError):
             log_handle.close()
 
+    # Brief sanity check — let the child fail fast on startup errors.
     time.sleep(0.6)
     if not _process_alive(proc.pid):
         console.print(
@@ -592,6 +544,7 @@ def _start_daemon_background(config, *, hotkey: str | None, no_paste: bool) -> N
     try:
         pid_path.write_text(str(proc.pid))
     except OSError as e:
+        # Daemon is running but we couldn't track it — kill it to avoid orphans.
         with contextlib.suppress(OSError):
             os.kill(proc.pid, 15)
         console.print(f"[err]Could not write pid file {pid_path}: {e}[/err]")
@@ -601,7 +554,8 @@ def _start_daemon_background(config, *, hotkey: str | None, no_paste: bool) -> N
     console.print(
         f"  [ok]daemon started[/ok] [hint](pid {proc.pid})[/hint]\n"
         f"  Hotkey:  [accent2]{combo}[/accent2]\n"
-        f"  Log:     [hint]{log_path}[/hint]"
+        f"  Log:     [hint]{log_path}[/hint]\n"
+        f"  Stop:    [value]voiceprompt stop[/value]"
     )
 
 
