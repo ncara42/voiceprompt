@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import questionary
@@ -168,58 +169,47 @@ def _action_setup(config: Config) -> None:
 # Settings submenu
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Semantic temperature presets (value, label, description)
+_TEMP_PRESETS: list[tuple[float, str, str]] = [
+    (0.2, "Precise",  "deterministic · minimal variation"),
+    (0.5, "Balanced", "accuracy with a touch of creativity"),
+    (0.8, "Creative", "more expressive · exploratory"),
+]
+
 
 def _action_settings(config: Config) -> None:
     while True:
         _render_home(config, subtitle="Settings")
         provider = reformulator.active_provider(config)
-        provider_label = reformulator.PROVIDER_LABELS[provider]
+
+        # Hint for API keys group: how many are configured
+        keys_configured = sum([
+            bool(config.anthropic_api_key.strip()),
+            bool(config.ollama_api_key.strip()),
+            bool(config.gemini_api_key.strip()),
+            bool(config.github_models_token.strip()),
+        ])
+        keys_hint = (
+            f"active: {_key_state(config.active_api_key)}  ·  {keys_configured} of 4 set"
+        )
 
         choices = [
-            sel.Separator("provider"),
-            sel.Choice("AI provider", "provider", hint=provider_label),
-            sel.Choice("Model", "model", hint=reformulator.active_model(config)),
-
-            sel.Separator("api keys"),
             sel.Choice(
-                "Anthropic",
-                "key:claude",
-                hint=_key_state(config.anthropic_api_key),
+                "Provider & model",
+                "provider_model",
+                hint=f"{reformulator.PROVIDER_LABELS[provider]} · {reformulator.short_model(config)}",
             ),
+            sel.Choice("API keys", "api_keys", hint=keys_hint),
             sel.Choice(
-                "Ollama Cloud",
-                "key:ollama",
-                hint=_key_state(config.ollama_api_key),
-            ),
-            sel.Choice(
-                "Google Gemini",
-                "key:gemini",
-                hint=_key_state(config.gemini_api_key),
-            ),
-            sel.Choice(
-                "GitHub Models",
-                "key:github_models",
-                hint=_key_state(config.github_models_token),
-            ),
-
-            sel.Separator("transcription"),
-            sel.Choice(
-                "Model",
+                "Transcription",
                 "transcription",
-                hint=_transcription_model_hint(config.transcription_model),
+                hint=f"{_short_transcription_model(config.transcription_model)} · {config.language}",
             ),
-            sel.Choice("Language", "language", hint=config.language),
-
-            sel.Separator("behavior"),
-            sel.Choice("Hotkey", "hotkey", hint=config.hotkey),
             sel.Choice(
-                "Auto-paste into active app",
-                "clipboard",
-                hint="on" if config.auto_copy_clipboard else "off",
+                "Behavior",
+                "behavior",
+                hint=f"hotkey · paste · temp · prompt",
             ),
-            sel.Choice("Temperature", "temp", hint=f"{config.temperature:.2f}"),
-            sel.Choice("System prompt", "prompt", hint="edit"),
-
             sel.Separator(),
             sel.Choice("Back", "back"),
         ]
@@ -231,50 +221,62 @@ def _action_settings(config: Config) -> None:
 
         if choice in (None, "back"):
             return
+        if choice == "provider_model":
+            _settings_provider_model(config)
+        elif choice == "api_keys":
+            _settings_api_keys(config)
+        elif choice == "transcription":
+            _settings_transcription(config)
+        elif choice == "behavior":
+            _settings_behavior(config)
+
+
+# ── Provider & model ──────────────────────────────────────────────────────────
+
+
+def _settings_provider_model(config: Config) -> None:
+    while True:
+        _render_home(config, subtitle="Settings › Provider & model", compact=True)
+        provider = reformulator.active_provider(config)
+        choices = [
+            sel.Choice(
+                "AI provider",
+                "provider",
+                hint=reformulator.PROVIDER_LABELS[provider],
+            ),
+            sel.Choice(
+                "Model",
+                "model",
+                hint=reformulator.short_model(config),
+            ),
+            sel.Separator(),
+            sel.Choice("Back", "back"),
+        ]
+        try:
+            choice = sel.select("", choices, back_value="back", show_footer=False)
+        except KeyboardInterrupt:
+            return
+        if choice in (None, "back"):
+            return
         if choice == "provider":
             _settings_pick_provider(config)
         elif choice == "model":
             _settings_pick_model(config)
-        elif choice == "key:claude":
-            _set_api_key(config, "claude", intro=False)
-            _pause()
-        elif choice == "key:ollama":
-            _set_api_key(config, "ollama", intro=False)
-            _pause()
-        elif choice == "key:gemini":
-            _set_api_key(config, "gemini", intro=False)
-            _pause()
-        elif choice == "key:github_models":
-            _set_api_key(config, "github_models", intro=False)
-            _pause()
-        elif choice == "transcription":
-            _settings_pick_transcription_model(config)
-        elif choice == "language":
-            _settings_pick_language(config)
-        elif choice == "hotkey":
-            _settings_edit_hotkey(config)
-        elif choice == "clipboard":
-            config.auto_copy_clipboard = not config.auto_copy_clipboard
-            cfg_mod.save(config)
-        elif choice == "temp":
-            _settings_edit_temperature(config)
-        elif choice == "prompt":
-            _settings_edit_system_prompt(config)
 
 
 def _settings_pick_provider(config: Config) -> None:
+    _render_home(config, subtitle="Settings › Provider", compact=True)
     picked = sel.select(
         "AI provider",
-        [
-            sel.Choice(label, key)
-            for key, label in reformulator.PROVIDER_LABELS.items()
-        ],
+        [sel.Choice(label, key) for key, label in reformulator.PROVIDER_LABELS.items()],
         default=config.provider,
         back_value=None,
+        show_footer=False,
     )
     if picked and picked != config.provider:
         config.provider = picked
         cfg_mod.save(config)
+        _saved_flash()
 
 
 def _settings_pick_model(config: Config) -> None:
@@ -288,11 +290,13 @@ def _settings_pick_model(config: Config) -> None:
     else:
         models, current = claude.MODELS, config.model
 
+    _render_home(config, subtitle="Settings › Model", compact=True)
     picked = sel.select(
         f"{reformulator.PROVIDER_LABELS[provider]} · model",
         [sel.Choice(name, name, hint=desc) for name, desc in models],
         default=current,
         back_value=None,
+        show_footer=False,
     )
     if not picked:
         return
@@ -305,9 +309,91 @@ def _settings_pick_model(config: Config) -> None:
     else:
         config.model = picked
     cfg_mod.save(config)
+    _saved_flash()
+
+
+# ── API keys ──────────────────────────────────────────────────────────────────
+
+_PROVIDER_KEY_FIELD = {
+    "claude":        lambda c: c.anthropic_api_key,
+    "ollama":        lambda c: c.ollama_api_key,
+    "gemini":        lambda c: c.gemini_api_key,
+    "github_models": lambda c: c.github_models_token,
+}
+
+
+def _settings_api_keys(config: Config) -> None:
+    while True:
+        _render_home(config, subtitle="Settings › API keys", compact=True)
+        active = reformulator.active_provider(config)
+
+        # Active provider first, then the rest
+        other_providers = [p for p in reformulator.PROVIDER_LABELS if p != active]
+
+        choices: list = [
+            sel.Separator("active provider"),
+            sel.Choice(
+                reformulator.PROVIDER_LABELS[active],
+                f"key:{active}",
+                hint=_key_state(_PROVIDER_KEY_FIELD[active](config)),
+            ),
+            sel.Separator("other providers"),
+        ]
+        for p in other_providers:
+            choices.append(sel.Choice(
+                reformulator.PROVIDER_LABELS[p],
+                f"key:{p}",
+                hint=_key_state(_PROVIDER_KEY_FIELD[p](config)),
+            ))
+        choices += [sel.Separator(), sel.Choice("Back", "back")]
+
+        try:
+            choice = sel.select("", choices, back_value="back", show_footer=False)
+        except KeyboardInterrupt:
+            return
+        if choice in (None, "back"):
+            return
+
+        provider_key = choice.removeprefix("key:")
+        _render_home(
+            config,
+            subtitle=f"Settings › API keys › {reformulator.PROVIDER_LABELS[provider_key]}",
+            compact=True,
+        )
+        _set_api_key(config, provider_key, intro=False)
+        _pause()
+
+
+# ── Transcription ─────────────────────────────────────────────────────────────
+
+
+def _settings_transcription(config: Config) -> None:
+    while True:
+        _render_home(config, subtitle="Settings › Transcription", compact=True)
+        choices = [
+            sel.Choice(
+                "Model",
+                "model",
+                hint=_transcription_model_hint(config.transcription_model),
+            ),
+            sel.Choice("Language", "language", hint=config.language),
+            sel.Separator(),
+            sel.Choice("Back", "back"),
+        ]
+        try:
+            choice = sel.select("", choices, back_value="back", show_footer=False)
+        except KeyboardInterrupt:
+            return
+        if choice in (None, "back"):
+            return
+        if choice == "model":
+            _settings_pick_transcription_model(config)
+        elif choice == "language":
+            _settings_pick_language(config)
 
 
 def _settings_pick_transcription_model(config: Config) -> None:
+    _render_home(config, subtitle="Settings › Transcription › Model", compact=True)
     picked = sel.select(
         "Transcription model",
         [
@@ -316,73 +402,248 @@ def _settings_pick_transcription_model(config: Config) -> None:
         ],
         default=config.transcription_model,
         back_value=None,
+        show_footer=False,
     )
     if not picked:
         return
     config.transcription_model = picked
     cfg_mod.save(config)
+    _saved_flash()
     _ensure_transcription_model_downloaded(picked, ask_confirm=False)
 
 
 def _settings_pick_language(config: Config) -> None:
+    _render_home(config, subtitle="Settings › Transcription › Language", compact=True)
     picked = sel.select(
         "Dictation language",
         [
             sel.Choice(
-                code,
-                code,
+                code, code,
                 hint="Parakeet auto-detects; this only hints the AI provider"
-                if code == "auto"
-                else "",
+                if code == "auto" else "",
             )
             for code in LANGUAGES
         ],
         default=config.language,
         back_value=None,
+        show_footer=False,
     )
-    if picked:
+    if picked and picked != config.language:
         config.language = picked
         cfg_mod.save(config)
+        _saved_flash()
 
 
-def _settings_edit_hotkey(config: Config) -> None:
-    console.print()
-    console.print(
-        f"  [hint]Current hotkey:[/hint] [accent2]{config.hotkey}[/accent2]"
+# ── Behavior ──────────────────────────────────────────────────────────────────
+
+
+def _settings_behavior(config: Config) -> None:
+    while True:
+        _render_home(config, subtitle="Settings › Behavior", compact=True)
+        temp_label = _temperature_label(config.temperature)
+        choices = [
+            sel.Choice("Hotkey", "hotkey", hint=config.hotkey),
+            sel.Choice(
+                "Auto-paste into active app",
+                "clipboard",
+                hint="on" if config.auto_copy_clipboard else "off",
+            ),
+            sel.Choice("Temperature", "temp", hint=f"{temp_label}  ({config.temperature:.2f})"),
+            sel.Choice("System prompt", "prompt", hint="edit"),
+            sel.Separator(),
+            sel.Choice("Back", "back"),
+        ]
+        try:
+            choice = sel.select("", choices, back_value="back", show_footer=False)
+        except KeyboardInterrupt:
+            return
+        if choice in (None, "back"):
+            return
+        if choice == "hotkey":
+            _settings_capture_hotkey(config)
+        elif choice == "clipboard":
+            config.auto_copy_clipboard = not config.auto_copy_clipboard
+            cfg_mod.save(config)
+            _saved_flash()
+        elif choice == "temp":
+            _settings_pick_temperature(config)
+        elif choice == "prompt":
+            _settings_edit_system_prompt(config)
+
+
+def _temperature_label(temp: float) -> str:
+    """Return the preset name for a temperature value, or 'Custom'."""
+    for value, label, _ in _TEMP_PRESETS:
+        if abs(temp - value) < 0.01:
+            return label
+    return "Custom"
+
+
+def _settings_pick_temperature(config: Config) -> None:
+    _render_home(config, subtitle="Settings › Behavior › Temperature", compact=True)
+    choices = [
+        sel.Choice(label, value, hint=desc)
+        for value, label, desc in _TEMP_PRESETS
+    ] + [
+        sel.Choice("Custom…", "custom", hint="enter a value manually"),
+    ]
+
+    # Pre-select the matching preset if current temp matches one
+    default_val: float | str | None = None
+    for value, _, _ in _TEMP_PRESETS:
+        if abs(config.temperature - value) < 0.01:
+            default_val = value
+            break
+    if default_val is None:
+        default_val = "custom"
+
+    picked = sel.select(
+        "Temperature",
+        choices,
+        default=default_val,
+        back_value=None,
+        show_footer=False,
     )
-    console.print(
-        "  [hint]Examples: ctrl+space · ctrl+shift+space · cmd+option+v[/hint]"
-    )
-    val = questionary.text(
-        "New hotkey:",
-        default=config.hotkey,
-        style=QSTYLE,
-    ).ask()
-    if val and val.strip() and val.strip() != config.hotkey:
-        config.hotkey = val.strip()
+    if picked is None:
+        return
+    if picked == "custom":
+        console.print()
+        val = questionary.text(
+            "Temperature (0.0 – 2.0):",
+            default=str(config.temperature),
+            validate=lambda x: _is_float_in_range(x, 0.0, 2.0),
+            style=QSTYLE,
+        ).ask()
+        if not val:
+            return
+        new_temp = float(val)
+    else:
+        new_temp = float(picked)
+
+    if abs(new_temp - config.temperature) > 0.001:
+        config.temperature = new_temp
         cfg_mod.save(config)
-        console.print("  [ok]Hotkey updated.[/ok]")
+        _saved_flash()
+
+
+def _settings_capture_hotkey(config: Config) -> None:
+    """Capture a new hotkey via pynput. Falls back to text input if unavailable."""
+    from voiceprompt import hotkey as hk  # noqa: PLC0415
+
+    _render_home(config, subtitle="Settings › Behavior › Hotkey", compact=True)
+    console.print(
+        f"  [hint]Current hotkey:[/hint]  [accent2]{config.hotkey}[/accent2]\n"
+    )
+
+    if not hk.is_supported():
+        # Fallback: text input
+        console.print(
+            "  [hint]Examples: ctrl+space · ctrl+shift+space · cmd+option+v[/hint]"
+        )
+        val = questionary.text(
+            "New hotkey:",
+            default=config.hotkey,
+            style=QSTYLE,
+        ).ask()
+        if val and val.strip() and val.strip() != config.hotkey:
+            config.hotkey = val.strip()
+            cfg_mod.save(config)
+            _saved_flash()
+            console.print(
+                "  [hint]Restart the listen daemon for the change to take effect.[/hint]"
+            )
+            _pause()
+        return
+
+    # pynput capture path
+    import threading  # noqa: PLC0415
+    from pynput import keyboard as kb  # noqa: PLC0415
+
+    console.print("  [brand]Press your new hotkey combination…[/brand]")
+    console.print("  [hint](esc to cancel)[/hint]\n")
+
+    captured: list[str] = []
+    done = threading.Event()
+    pressed: set = set()
+
+    _MOD_NAMES = {
+        kb.Key.ctrl, kb.Key.ctrl_l, kb.Key.ctrl_r,
+        kb.Key.shift, kb.Key.shift_l, kb.Key.shift_r,
+        kb.Key.alt, kb.Key.alt_l, kb.Key.alt_r,
+        kb.Key.cmd, kb.Key.cmd_l, kb.Key.cmd_r,
+    }
+    _MOD_LABELS = {
+        kb.Key.ctrl: "ctrl", kb.Key.ctrl_l: "ctrl", kb.Key.ctrl_r: "ctrl",
+        kb.Key.shift: "shift", kb.Key.shift_l: "shift", kb.Key.shift_r: "shift",
+        kb.Key.alt: "alt", kb.Key.alt_l: "alt", kb.Key.alt_r: "alt",
+        kb.Key.cmd: "cmd", kb.Key.cmd_l: "cmd", kb.Key.cmd_r: "cmd",
+    }
+
+    def on_press(key):
+        if key == kb.Key.esc:
+            done.set()
+            return False
+        pressed.add(key)
+
+    def on_release(key):
+        if key == kb.Key.esc or done.is_set():
+            return False
+        # Fire when a non-modifier key is released while modifiers are held
+        if key not in _MOD_NAMES and pressed:
+            parts: list[str] = []
+            seen_mods: set[str] = set()
+            for k in sorted(pressed, key=lambda x: str(x)):
+                label = _MOD_LABELS.get(k)
+                if label and label not in seen_mods:
+                    parts.append(label)
+                    seen_mods.add(label)
+            # The main key
+            if hasattr(key, "char") and key.char:
+                parts.append(key.char.lower())
+            elif hasattr(key, "name") and key.name:
+                parts.append(key.name.lower())
+            else:
+                parts.append(str(key))
+            captured.clear()
+            captured.append("+".join(parts))
+            done.set()
+            return False
+        pressed.discard(key)
+
+    listener = kb.Listener(on_press=on_press, on_release=on_release)
+    listener.start()
+    done.wait(timeout=15)
+    listener.stop()
+
+    if not captured:
+        console.print("  [hint]cancelled.[/hint]")
+        _pause()
+        return
+
+    new_hotkey = captured[0]
+    console.print(f"  [hint]Captured:[/hint]  [accent2]{new_hotkey}[/accent2]\n")
+
+    confirm = sel.select(
+        "",
+        [
+            sel.Choice("Save this hotkey", True),
+            sel.Choice("Cancel", False),
+        ],
+        back_value=False,
+        show_footer=False,
+    )
+    if confirm:
+        config.hotkey = new_hotkey
+        cfg_mod.save(config)
+        _saved_flash()
         console.print(
             "  [hint]Restart the listen daemon for the change to take effect.[/hint]"
         )
         _pause()
 
 
-def _settings_edit_temperature(config: Config) -> None:
-    console.print()
-    val = questionary.text(
-        "Temperature (0.0 = deterministic, 1.0 = creative):",
-        default=str(config.temperature),
-        validate=lambda x: _is_float_in_range(x, 0.0, 2.0),
-        style=QSTYLE,
-    ).ask()
-    if val:
-        config.temperature = float(val)
-        cfg_mod.save(config)
-
-
 def _settings_edit_system_prompt(config: Config) -> None:
-    console.print()
+    _render_home(config, subtitle="Settings › Behavior › System prompt", compact=True)
     console.print(
         Panel(
             Text(config.system_prompt, style="value"),
@@ -400,7 +661,7 @@ def _settings_edit_system_prompt(config: Config) -> None:
     if new and new.strip():
         config.system_prompt = new.strip()
         cfg_mod.save(config)
-        console.print("  [ok]Prompt updated.[/ok]")
+        _saved_flash()
     _pause()
 
 
@@ -634,28 +895,24 @@ def _action_listen(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _action_dictate(
-    config: Config,
-    *,
-    paste: bool = False,
-    exit_after: bool = False,
-    hotkey_ctx=None,
-) -> None:
-    """Run a dictation cycle: record → transcribe → refine → copy → maybe paste.
+@dataclass
+class _RecordingResult:
+    """Intermediate result from the recording phase."""
 
-    ``paste=True`` simulates ⌘V / Ctrl+V into whichever window has focus when
-    the cycle finishes. The listen daemon enables it; the menu's "Dictate once"
-    leaves it off (clipboard only).
+    wav_path: Path
+    duration: float
+    peak: int
+    elapsed: float
+
+
+def _record_audio(
+    config: Config, *, hotkey_ctx: object | None = None,
+) -> _RecordingResult | None:
+    """Record audio from the microphone, validate it, and return the WAV path.
+
+    Returns ``None`` (and prints diagnostics) when the recording is cancelled,
+    too short, silent, or the microphone cannot be opened.
     """
-    console.print()
-
-    # Make sure the transcription model is on disk before recording -- downloading
-    # mid-dictation would block for minutes and waste the captured audio.
-    if not _ensure_transcription_model_downloaded(config.transcription_model, ask_confirm=True):
-        if not exit_after:
-            _pause()
-        return
-
     rec = recorder.Recorder(sample_rate=config.sample_rate)
 
     started = time.monotonic()
@@ -663,14 +920,10 @@ def _action_dictate(
         rec.start()
     except recorder.NoInputDeviceError:
         console.print("  [err][!] No audio input found.[/err]")
-        if not exit_after:
-            _pause()
-        return
+        return None
     except Exception as e:  # noqa: BLE001
         console.print(f"  [err][!] Could not start recording:[/err] {e}")
-        if not exit_after:
-            _pause()
-        return
+        return None
 
     committed = viz.record_visual(rec, hotkey_ctx=hotkey_ctx)
 
@@ -680,17 +933,13 @@ def _action_dictate(
         if result is not None:
             with contextlib.suppress(OSError):
                 result[0].unlink(missing_ok=True)
-        if not exit_after:
-            _pause()
-        return
+        return None
     if result is None:
         console.print("  [warn]Recording too short. Try again.[/warn]")
-        if not exit_after:
-            _pause()
-        return
+        return None
 
     wav_path, duration, peak = result
-    record_secs = time.monotonic() - started
+    elapsed = time.monotonic() - started
     console.print(
         f"  [hint]captured[/hint] [value]{duration:.1f}s[/value]   "
         f"[hint]peak[/hint] {_peak_bar(peak)} "
@@ -716,9 +965,7 @@ def _action_dictate(
         )
         with contextlib.suppress(OSError):
             wav_path.unlink(missing_ok=True)
-        if not exit_after:
-            _pause()
-        return
+        return None
 
     if peak < 500:
         console.print(
@@ -726,8 +973,11 @@ def _action_dictate(
             f"[hint](peak {peak}). Speak closer to the mic.[/hint]"
         )
 
-    # Step 1: local STT with Parakeet
-    transcript: str | None = None
+    return _RecordingResult(wav_path=wav_path, duration=duration, peak=peak, elapsed=elapsed)
+
+
+def _transcribe_audio(config: Config, wav_path: Path) -> str | None:
+    """Run local STT with Parakeet. Returns the transcript or ``None`` on failure."""
     first_load = not transcriber.is_model_cached(config.transcription_model)
     short_name = _short_transcription_model(config.transcription_model)
     spinner_msg = (
@@ -735,25 +985,26 @@ def _action_dictate(
         if first_load
         else f"[brand]transcribing · {short_name}…[/brand]"
     )
+
+    transcript: str | None = None
     with console.status(spinner_msg, spinner="dots"):
         try:
             transcript = transcriber.transcribe(
-                wav_path, model_name=config.transcription_model, language=config.language
+                wav_path, model_name=config.transcription_model, language=config.language,
             )
         except transcriber.ModelDownloadError as e:
-            console.print(_error_panel("Model download failed", str(e),
-                                       hint="Check your internet connection or pick a smaller model."))
+            console.print(_error_panel(
+                "Model download failed", str(e),
+                hint="Check your internet connection or pick a smaller model.",
+            ))
         except transcriber.TranscriptionError as e:
             console.print(_error_panel("Transcription failed", str(e)))
 
     if not transcript:
-        with contextlib.suppress(OSError):
-            Path(wav_path).unlink(missing_ok=True)
         if transcript is not None:
+            # transcriber returned an empty string — no speech detected.
             console.print("  [warn]Parakeet did not detect speech. Try again.[/warn]")
-        if not exit_after:
-            _pause()
-        return
+        return None
 
     console.print()
     console.print(
@@ -765,11 +1016,26 @@ def _action_dictate(
             padding=(0, 2),
         )
     )
+    return transcript
 
-    # Step 2: reformulate with the active provider
-    final_prompt: str | None = None
+
+@dataclass
+class _RefinementResult:
+    """Intermediate result from the AI refinement phase."""
+
+    prompt: str
+    elapsed: float
+
+
+def _refine_transcript(config: Config, transcript: str) -> _RefinementResult | None:
+    """Send the transcript to the active AI provider for refinement.
+
+    Returns the refined prompt and timing info, or ``None`` on failure.
+    """
     provider_label = reformulator.PROVIDER_LABELS[reformulator.active_provider(config)]
-    refine_started = time.monotonic()
+    started = time.monotonic()
+
+    final_prompt: str | None = None
     with console.status(
         f"[brand]refining · {reformulator.short_model(config)}…[/brand]",
         spinner="dots",
@@ -777,25 +1043,36 @@ def _action_dictate(
         try:
             final_prompt = reformulator.reformulate_text(transcript, config)
         except reformulator.AuthError as e:
-            console.print(_error_panel("Authentication failed", str(e),
-                                       hint="Check your API key in Settings."))
+            console.print(_error_panel(
+                "Authentication failed", str(e),
+                hint="Check your API key in Settings.",
+            ))
         except reformulator.QuotaExceededError as e:
-            hint = f"Retry in ~{e.retry_after:.0f}s." if e.retry_after else "Switch models or wait a moment."
+            hint = (
+                f"Retry in ~{e.retry_after:.0f}s."
+                if e.retry_after
+                else "Switch models or wait a moment."
+            )
             console.print(_error_panel("Quota exceeded", str(e), hint=hint))
         except reformulator.ProviderError as e:
             console.print(_error_panel(f"{provider_label} error", str(e)))
-    refine_secs = time.monotonic() - refine_started
-
-    with contextlib.suppress(OSError):
-        Path(wav_path).unlink(missing_ok=True)
 
     if final_prompt is None:
-        if not exit_after:
-            _pause()
-        return
+        return None
+    return _RefinementResult(prompt=final_prompt, elapsed=time.monotonic() - started)
 
-    word_count = len(final_prompt.split())
-    total_secs = time.monotonic() - started
+
+def _deliver_prompt(
+    config: Config,
+    prompt: str,
+    *,
+    record_secs: float,
+    refine_secs: float,
+    total_secs: float,
+    paste: bool,
+) -> None:
+    """Display the final prompt, copy to clipboard, and optionally paste."""
+    word_count = len(prompt.split())
     meta = (
         f"[hint]{record_secs:.1f}s rec · "
         f"{refine_secs:.1f}s {reformulator.active_provider(config)} · "
@@ -805,7 +1082,7 @@ def _action_dictate(
     console.print()
     console.print(
         Panel(
-            Text(final_prompt, style="value"),
+            Text(prompt, style="value"),
             border_style="ok",
             title="[ok]refined prompt[/ok]",
             subtitle=meta,
@@ -817,7 +1094,7 @@ def _action_dictate(
 
     copied = False
     if config.auto_copy_clipboard:
-        copied = clipboard_copy(final_prompt)
+        copied = clipboard_copy(prompt)
         if copied:
             if not paste:
                 console.print(
@@ -837,6 +1114,66 @@ def _action_dictate(
                 "\n  [warn]Could not paste automatically.[/warn] "
                 f"[hint]{inject.missing_tool_hint()}[/hint]"
             )
+
+
+def _action_dictate(
+    config: Config,
+    *,
+    paste: bool = False,
+    exit_after: bool = False,
+    hotkey_ctx=None,
+) -> None:
+    """Run a dictation cycle: record → transcribe → refine → deliver.
+
+    ``paste=True`` simulates ⌘V / Ctrl+V into whichever window has focus when
+    the cycle finishes. The listen daemon enables it; the menu's "Dictate once"
+    leaves it off (clipboard only).
+    """
+    console.print()
+
+    # Make sure the transcription model is on disk before recording — downloading
+    # mid-dictation would block for minutes and waste the captured audio.
+    if not _ensure_transcription_model_downloaded(config.transcription_model, ask_confirm=True):
+        if not exit_after:
+            _pause()
+        return
+
+    started = time.monotonic()
+
+    # 1. Record ───────────────────────────────────────────────────────────────
+    recording = _record_audio(config, hotkey_ctx=hotkey_ctx)
+    if recording is None:
+        if not exit_after:
+            _pause()
+        return
+
+    # 2. Transcribe ───────────────────────────────────────────────────────────
+    transcript = _transcribe_audio(config, recording.wav_path)
+    if transcript is None:
+        with contextlib.suppress(OSError):
+            recording.wav_path.unlink(missing_ok=True)
+        if not exit_after:
+            _pause()
+        return
+
+    # 3. Refine ───────────────────────────────────────────────────────────────
+    refinement = _refine_transcript(config, transcript)
+    with contextlib.suppress(OSError):
+        recording.wav_path.unlink(missing_ok=True)
+    if refinement is None:
+        if not exit_after:
+            _pause()
+        return
+
+    # 4. Deliver ──────────────────────────────────────────────────────────────
+    _deliver_prompt(
+        config,
+        refinement.prompt,
+        record_secs=recording.elapsed,
+        refine_secs=refinement.elapsed,
+        total_secs=time.monotonic() - started,
+        paste=paste,
+    )
 
     if not exit_after:
         _pause()
@@ -914,10 +1251,32 @@ def _action_info(config: Config) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _render_home(config: Config, *, subtitle: str | None = None) -> None:
-    console.clear()
-    banner(_get_version())
-    _render_status(config, subtitle=subtitle)
+def _render_home(
+    config: Config,
+    *,
+    subtitle: str | None = None,
+    compact: bool = False,
+) -> None:
+    """Render the header and flush atomically (no blank-frame flicker).
+
+    ``compact=True`` renders a single status line instead of the full panel.
+    Use it in drill-down sub-menus to reduce visual weight.
+    """
+    buf = console.capture()
+    with buf:
+        if compact:
+            _render_status_compact(config, subtitle=subtitle)
+        else:
+            banner(_get_version())
+            _render_status(config, subtitle=subtitle)
+
+    sys.stdout.write(f"\033[H\033[J{buf.get()}")
+    sys.stdout.flush()
+
+
+def _saved_flash() -> None:
+    """Brief confirmation shown after persisting a setting."""
+    console.print("  [ok]✓[/ok] [hint]saved[/hint]")
 
 
 def _render_status(config: Config, *, subtitle: str | None = None) -> None:
@@ -965,6 +1324,23 @@ def _render_status(config: Config, *, subtitle: str | None = None) -> None:
             expand=False,
         )
     )
+    console.print()
+
+
+def _render_status_compact(config: Config, *, subtitle: str | None = None) -> None:
+    """Single-line status bar for drill-down sub-menus."""
+    provider = reformulator.active_provider(config)
+    state = "[ok]ready[/ok]" if config.is_configured else "[warn]setup needed[/warn]"
+    model = reformulator.short_model(config)
+    label = reformulator.PROVIDER_LABELS[provider]
+    version = _get_version()
+
+    breadcrumb = f"  [hint]voiceprompt[/hint] [hint]v{version}[/hint]"
+    if subtitle:
+        breadcrumb += f"  [hint]·[/hint]  [brand]{subtitle}[/brand]"
+    breadcrumb += f"  [hint]·[/hint]  [value]{label}[/value] [hint]·[/hint] [accent2]{model}[/accent2]  [hint]·[/hint]  {state}"
+
+    console.print(breadcrumb)
     console.print()
 
 
@@ -1052,10 +1428,8 @@ def _set_api_key(config: Config, provider: str, *, intro: bool) -> bool:
     try:
         key = sel.password_input("Paste your API key:")
     except KeyboardInterrupt:
-        console.print("  [warn]cancelled.[/warn]")
         return False
     if not key:
-        console.print("  [warn]cancelled.[/warn]")
         return False
 
     cleaned = key.strip()

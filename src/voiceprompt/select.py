@@ -305,7 +305,6 @@ def password_input(message: str) -> str | None:
             ("", " "),
         ]
     )
-    bottom = FT([("class:hint", "  ↵ confirm    esc cancel    ctrl+c quit")])
 
     pt_style = Style.from_dict(
         {
@@ -315,13 +314,18 @@ def password_input(message: str) -> str | None:
         }
     )
 
+    # Print the hint inline — bottom_toolbar pins it to the screen bottom
+    # and leaves a blank sea of whitespace in between.
+    hint = FT([("class:hint", "  ↵ confirm    esc cancel    ctrl+c quit\n")])
+    from prompt_toolkit import print_formatted_text  # noqa: PLC0415
+    print_formatted_text(hint, style=pt_style)
+
     try:
         result = pt_prompt(
             prompt_text,
             is_password=True,
             key_bindings=kb,
             style=pt_style,
-            bottom_toolbar=bottom,
         )
     except EOFError:
         return None
