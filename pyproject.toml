@@ -39,7 +39,7 @@ dependencies = [
     # Cross-platform local STT: works on macOS (Intel + ARM), Linux, Windows.
     # CPU by default (int8); auto-uses CUDA float16 when an NVIDIA GPU is present.
     "faster-whisper>=1.0",
-    "av>=11,<14",  # av 14+ removed av.audio breaking faster-whisper
+    "av>=11,<18",  # av 14+ removed av.audio breaking faster-whisper
     "huggingface-hub>=0.24",
     "hf-transfer>=0.1.6",
     "mlx-whisper>=0.4.0; sys_platform == 'darwin'",
